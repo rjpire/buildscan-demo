@@ -536,6 +536,40 @@ if not building:
         st.rerun()
     st.stop()
 
+def _render_report_room(room):
+    snap = latest_snapshot(room)
+    if not snap:
+        return
+    label = room.get('label', room.get('id', ''))
+    fixtures = snap.get('fixtures', [])
+    fix_count = sum(f.get('quantity', f.get('count', 1)) for f in fixtures)
+    photos = snap.get('photos', [])
+
+    with st.expander(f"{label} ({room['id']}) — {fix_count} fixtures {priority_badge(room.get('priority', ''))}", expanded=True):
+        if photos:
+            pcols = st.columns(min(len(photos), 4))
+            for i, p in enumerate(photos[:4]):
+                with pcols[i % 4]:
+                    st.image(base64.b64decode(p['thumbUri']), use_container_width=True)
+
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            st.markdown(f"**Ceiling:** {snap.get('ceiling_type', 'N/A')} {cond_badge(snap.get('ceiling_condition'))}", unsafe_allow_html=True)
+        with sc2:
+            st.markdown(f"**Walls:** {snap.get('wall_type', 'N/A')} {cond_badge(snap.get('wall_condition'))}", unsafe_allow_html=True)
+        with sc3:
+            st.markdown(f"**Flooring:** {snap.get('flooring_type', 'N/A')} {cond_badge(snap.get('flooring_condition'))}", unsafe_allow_html=True)
+
+        for f in sorted(fixtures, key=lambda x: -(x.get('quantity', x.get('count', 1)))):
+            st.markdown(f"{f.get('quantity', f.get('count',1))}× **{fmt_type(f.get('type',''))}** {f.get('subtype','')} {cond_badge(f.get('condition'))} {conf_badge(f.get('confidence'))} {priority_badge(f.get('priority',''))}", unsafe_allow_html=True)
+
+        if snap.get('materials_noted'):
+            st.markdown(" ".join(f'<span class="material-tag">{m}</span>' for m in snap['materials_noted']), unsafe_allow_html=True)
+
+        if snap.get('general_notes'):
+            st.caption(snap['general_notes'])
+
+
 tab_rooms, tab_inventory, tab_report, tab_export = st.tabs(["🏢 Rooms", "📋 Inventory", "📊 Report", "📥 Export"])
 
 rooms = get_rooms()
@@ -924,47 +958,6 @@ with tab_export:
                 st.error("Name doesn't match.")
     else:
         st.info("No data to export.")
-
-
-# =============================================================================
-# REPORT ROOM RENDERER
-# =============================================================================
-
-def _render_report_room(room):
-    snap = latest_snapshot(room)
-    if not snap:
-        return
-    label = room.get('label', room.get('id', ''))
-    fixtures = snap.get('fixtures', [])
-    fix_count = sum(f.get('quantity', f.get('count', 1)) for f in fixtures)
-    photos = snap.get('photos', [])
-
-    with st.expander(f"{label} ({room['id']}) — {fix_count} fixtures {priority_badge(room.get('priority', ''))}", expanded=True):
-        # Photos
-        if photos:
-            pcols = st.columns(min(len(photos), 4))
-            for i, p in enumerate(photos[:4]):
-                with pcols[i % 4]:
-                    st.image(base64.b64decode(p['thumbUri']), use_container_width=True)
-
-        # Surfaces
-        sc1, sc2, sc3 = st.columns(3)
-        with sc1:
-            st.markdown(f"**Ceiling:** {snap.get('ceiling_type', 'N/A')} {cond_badge(snap.get('ceiling_condition'))}", unsafe_allow_html=True)
-        with sc2:
-            st.markdown(f"**Walls:** {snap.get('wall_type', 'N/A')} {cond_badge(snap.get('wall_condition'))}", unsafe_allow_html=True)
-        with sc3:
-            st.markdown(f"**Flooring:** {snap.get('flooring_type', 'N/A')} {cond_badge(snap.get('flooring_condition'))}", unsafe_allow_html=True)
-
-        # Fixtures
-        for f in sorted(fixtures, key=lambda x: -(x.get('quantity', x.get('count', 1)))):
-            st.markdown(f"{f.get('quantity', f.get('count',1))}× **{fmt_type(f.get('type',''))}** {f.get('subtype','')} {cond_badge(f.get('condition'))} {conf_badge(f.get('confidence'))} {priority_badge(f.get('priority',''))}", unsafe_allow_html=True)
-
-        if snap.get('materials_noted'):
-            st.markdown(" ".join(f'<span class="material-tag">{m}</span>' for m in snap['materials_noted']), unsafe_allow_html=True)
-
-        if snap.get('general_notes'):
-            st.caption(snap['general_notes'])
 
 
 # Footer
