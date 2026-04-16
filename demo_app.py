@@ -1,6 +1,8 @@
 """
-BuildScan Demo - AI-Powered Building Assessment
-A Streamlit app that uses Claude to analyze room photos for construction assessments.
+BuildScan — AI-Powered Building Assessment
+Streamlit app with project management, floor plans, condition ratings,
+confidence indicators, priority tagging, before/after comparison,
+photo thumbnails, manual fixture editing, and full export.
 """
 
 import streamlit as st
@@ -19,144 +21,115 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.utils import ImageReader
 
 
 # =============================================================================
-# API KEY SECURITY — uses Streamlit secrets, env var, or sidebar input
+# CONFIG
 # =============================================================================
 
+FIXTURE_TYPES = [
+    'light_fixture','outlet','switch','smoke_detector','sink','toilet','door','window',
+    'vent','thermostat','fire_extinguisher','sprinkler_head','cabinet','countertop',
+    'bathtub','staircase','garage_door','electrical_panel','water_heater','hvac_unit','sump_pump'
+]
+ROOM_TYPES = [
+    'Kitchen','Living Room','Bedroom','Bathroom','Basement','Garage','Office',
+    'Dining Room','Hallway','Stairwell','Mechanical Room','Utility Room','Attic',
+    'Exterior','Roof','Crawl Space','Storage','Conference Room','Break Room','Other'
+]
+MAX_SNAPSHOTS = 5
+
 def get_api_key():
-    """Get API key from Streamlit secrets, env var, or session state."""
-    # 1. Streamlit Cloud secrets (highest priority)
     try:
         return st.secrets["ANTHROPIC_API_KEY"]
     except (KeyError, FileNotFoundError):
         pass
-    # 2. Environment variable
     env_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if env_key:
         return env_key
-    # 3. Session state (from sidebar input)
     return st.session_state.get("user_api_key", "")
 
+def fmt_type(s):
+    return (s or '').replace('_', ' ').title()
 
-# Page config
-st.set_page_config(
-    page_title="BuildScan - Building Assessment",
-    page_icon="🏗️",
-    layout="wide"
-)
-
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1E3A5F;
-        margin-bottom: 0;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #666;
-        margin-top: 0;
-    }
-    .fixture-badge {
-        background: #4F46E5;
-        color: white;
-        padding: 3px 10px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin: 2px;
-        display: inline-block;
-    }
-    .surface-tag {
-        background: #e0e7ff;
-        color: #3730a3;
-        padding: 3px 10px;
-        border-radius: 6px;
-        font-size: 0.85rem;
-        margin: 2px;
-        display: inline-block;
-    }
-    .material-tag {
-        background: #fef3c7;
-        color: #92400e;
-        padding: 3px 10px;
-        border-radius: 6px;
-        font-size: 0.85rem;
-        margin: 2px;
-        display: inline-block;
-    }
-    .cond-good {
-        background: #dcfce7;
-        color: #166534;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.8rem;
-        display: inline-block;
-    }
-    .cond-fair {
-        background: #fef9c3;
-        color: #854d0e;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.8rem;
-        display: inline-block;
-    }
-    .cond-poor {
-        background: #fecaca;
-        color: #991b1b;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.8rem;
-        display: inline-block;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
-if 'room_analyses' not in st.session_state:
-    st.session_state.room_analyses = []
-if 'room_photos' not in st.session_state:
-    st.session_state.room_photos = {}  # {room_label: [base64_thumbnail_strings]}
-if 'user_api_key' not in st.session_state:
-    st.session_state.user_api_key = ""
+def uid():
+    import random, time
+    return hex(int(time.time()))[2:] + hex(random.randint(0, 0xFFFF))[2:]
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# SESSION STATE INIT
 # =============================================================================
 
-FIXTURE_TYPES = [
-    "light_fixture", "outlet", "switch", "smoke_detector", "sink", "toilet",
-    "door", "window", "vent", "thermostat", "fire_extinguisher", "sprinkler_head",
-    "cabinet", "countertop", "bathtub", "staircase", "garage_door", "electrical_panel",
-    "water_heater", "hvac_unit", "sump_pump",
-]
+def init_state():
+    if 'projects' not in st.session_state:
+        st.session_state.projects = {}
+    if 'active_project' not in st.session_state:
+        st.session_state.active_project = None
+    if 'user_api_key' not in st.session_state:
+        st.session_state.user_api_key = ""
+
+init_state()
 
 
-def condition_badge(condition):
-    """Return HTML for a condition badge."""
-    c = (condition or "").lower().strip()
-    if c == "good":
-        return '<span class="cond-good">Good</span>'
-    elif c == "fair":
-        return '<span class="cond-fair">Fair</span>'
-    elif c == "poor":
-        return '<span class="cond-poor">Poor</span>'
-    return ""
+# =============================================================================
+# DATA HELPERS
+# =============================================================================
 
+def get_project():
+    pid = st.session_state.active_project
+    return st.session_state.projects.get(pid) if pid else None
+
+def get_building(proj=None):
+    proj = proj or get_project()
+    if not proj:
+        return None
+    bids = list(proj.get('buildings', {}).keys())
+    return proj['buildings'][bids[0]] if bids else None
+
+def get_rooms(building=None):
+    building = building or get_building()
+    if not building:
+        return {}
+    return building.get('rooms', {})
+
+def get_room(room_id):
+    rooms = get_rooms()
+    return rooms.get(room_id)
+
+def latest_snapshot(room):
+    snaps = room.get('snapshots', [])
+    return snaps[-1] if snaps else None
+
+def is_assessed(room):
+    snap = latest_snapshot(room)
+    return bool(snap and snap.get('fixtures'))
+
+def ensure_snapshot(room):
+    if not room.get('snapshots'):
+        room['snapshots'] = [{'takenAt': datetime.now().isoformat(), 'photos': [], 'fixtures': []}]
+    return room['snapshots'][-1]
+
+def auto_room_id(building, floor_id=None):
+    floors = building.get('floors', [])
+    floor = next((f for f in floors if f['id'] == floor_id), None) if floor_id else None
+    floor_label = floor['label'] if floor else '0'
+    rooms = building.get('rooms', {})
+    existing = [r for r in rooms.values() if r.get('floorId') == floor_id]
+    seq = len(existing) + 1
+    return f"{floor_label}-{seq:02d}"
+
+
+# =============================================================================
+# IMAGE HELPERS
+# =============================================================================
 
 def encode_image(uploaded_file):
-    """Convert uploaded file to base64."""
     return base64.standard_b64encode(uploaded_file.getvalue()).decode("utf-8")
 
-
-def make_thumbnail(uploaded_file, max_width=400):
-    """Create a small JPEG thumbnail from an uploaded file."""
+def make_thumbnail(uploaded_file, max_width=200):
     uploaded_file.seek(0)
     img = Image.open(uploaded_file)
     if img.mode in ('RGBA', 'P'):
@@ -165,758 +138,835 @@ def make_thumbnail(uploaded_file, max_width=400):
     new_size = (max_width, int(img.height * ratio))
     img = img.resize(new_size, Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format='JPEG', quality=70)
+    img.save(buf, format='JPEG', quality=50)
     return base64.b64encode(buf.getvalue()).decode('utf-8')
 
-
-def auto_room_label(room_type):
-    """Generate a unique room label like 'Kitchen #2' if duplicates exist."""
-    existing = [a.get('room_name', '') for a in st.session_state.room_analyses]
-    if room_type not in existing:
-        return room_type
-    count = sum(1 for n in existing if n.startswith(room_type)) + 1
-    return f"{room_type} #{count}"
+def compress_for_api(uploaded_file, max_width=1600, max_bytes=800*1024):
+    uploaded_file.seek(0)
+    img = Image.open(uploaded_file)
+    if img.mode in ('RGBA', 'P'):
+        img = img.convert('RGB')
+    if img.width > max_width or img.height > max_width:
+        ratio = min(max_width / img.width, max_width / img.height)
+        img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+    quality = 70
+    while quality > 10:
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=quality)
+        if buf.tell() <= max_bytes:
+            return base64.b64encode(buf.getvalue()).decode('utf-8')
+        quality -= 10
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=10)
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
 
 
 # =============================================================================
 # CLAUDE AI ANALYSIS
 # =============================================================================
 
-def analyze_room_assessment(client, images_base64, room_name):
-    """Send all room images to Claude in a single call for unified, deduplicated analysis."""
+def analyze_room(client, images_base64, room_label):
+    num = len(images_base64)
+    ctx = f"This is a photo of the {room_label}." if num == 1 else f"These are {num} photos of the SAME room: the {room_label}, taken from different angles."
+    dedup = "This is a single view — count everything visible." if num == 1 else "Cross-reference all photos to build ONE unified inventory. Do NOT double-count items visible in multiple photos."
 
-    num_photos = len(images_base64)
-    photo_context = (
-        f"This is a photo of the {room_name}."
-        if num_photos == 1
-        else f"These are {num_photos} photos of the SAME room: the {room_name}, taken from different angles."
-    )
+    prompt = f"""{ctx}
 
-    prompt = f"""{photo_context}
+You are a construction building assessment specialist. Analyze {"this photo" if num == 1 else "ALL photos together"} to create a comprehensive inventory.
 
-You are a construction building assessment specialist. Analyze {"this photo" if num_photos == 1 else "ALL photos together"} to create a comprehensive inventory of building materials, fixtures, and structural elements visible in the room.
+IMPORTANT: {dedup}
 
-IMPORTANT: {"This is a single view — count everything visible." if num_photos == 1 else "These photos show the SAME room from different angles. Cross-reference the photos to build ONE unified inventory. Do NOT double-count items that appear in multiple photos — use spatial reasoning to determine if a fixture seen in one photo is the same one seen in another. However, DO count items that are only visible in one photo but not others."}
+SURFACES (rate condition good/fair/poor):
+- ceiling_type, wall_type, flooring_type
 
-For this room, identify and count ALL of the following that are visible:
+FIXTURES (count each, rate condition good/fair/poor, rate confidence high/medium/low):
+light_fixture, outlet, switch, smoke_detector, sink, toilet, door, window, vent, thermostat,
+fire_extinguisher, sprinkler_head, cabinet, countertop, bathtub, staircase, electrical_panel,
+water_heater, hvac_unit
 
-SURFACES (also rate condition as good/fair/poor):
-- ceiling_type: What is the ceiling made of? (drywall, drop/suspended ceiling, plaster, exposed structure, tongue and groove wood, coffered, vaulted, concrete, metal/tin)
-- wall_type: What are the walls made of? (drywall, plaster, brick, concrete block, wood paneling, tile, concrete, stone, stucco)
-- flooring_type: What is the floor? (hardwood, laminate, tile, vinyl/LVP, carpet, concrete, linoleum, natural stone, epoxy)
+CONDITION: good = no issues, fair = minor wear, poor = damaged/needs repair
+CONFIDENCE: high = clearly visible, medium = partially visible/likely, low = uncertain
 
-FIXTURES (count each one you can see, and rate condition as good/fair/poor):
-- light_fixture: Count and describe type (recessed/can, pendant, fluorescent, track, chandelier, sconce, flush mount, LED panel)
-- outlet: Count visible electrical outlets, note if GFCI
-- switch: Count light switches
-- smoke_detector: Count smoke/CO detectors on ceiling
-- sink: Count sinks, note type (undermount, drop-in, pedestal, etc.)
-- toilet: Count if visible
-- door: Count doors, note type (interior, exterior, sliding, pocket, French)
-- window: Count windows, note type (single-hung, double-hung, casement, sliding)
-- vent: Count HVAC vents/registers (supply, return, exhaust)
-- thermostat: Note if visible
-- fire_extinguisher: Note if visible
-- sprinkler_head: Count if visible
-- cabinet: Count/describe cabinets
-- countertop: Describe material if visible
-- bathtub: Note type (standard, walk-in shower, tub/shower combo)
-- staircase: Note if visible with railing type
-
-CONDITION GUIDE:
-- "good" = No visible issues, well-maintained
-- "fair" = Minor wear, cosmetic issues, functional but showing age
-- "poor" = Damaged, needs repair or replacement, safety concern
-
-MATERIALS:
-- List any visible building materials (copper pipe, PVC, galvanized steel, etc.)
-
-EQUIPMENT:
-- Note any major equipment visible (HVAC unit, water heater, electrical panel) with manufacturer/model if readable
+MATERIALS: List visible building materials (copper pipe, PVC, etc.)
+EQUIPMENT: Note HVAC, water heater, electrical panel with manufacturer/model if readable
 
 Respond ONLY with valid JSON:
 {{
   "room_type": "string",
-  "ceiling_type": "string",
-  "ceiling_condition": "good | fair | poor",
-  "wall_type": "string",
-  "wall_condition": "good | fair | poor",
-  "flooring_type": "string",
-  "flooring_condition": "good | fair | poor",
-  "fixtures": [
-    {{
-      "type": "string (e.g. light_fixture, outlet, switch, etc.)",
-      "count": number,
-      "subtype": "string (e.g. recessed, GFCI, double-hung)",
-      "description": "string",
-      "condition": "good | fair | poor",
-      "condition_notes": "string or null"
-    }}
-  ],
+  "ceiling_type": "string", "ceiling_condition": "good|fair|poor",
+  "wall_type": "string", "wall_condition": "good|fair|poor",
+  "flooring_type": "string", "flooring_condition": "good|fair|poor",
+  "fixtures": [{{"type":"string","count":1,"subtype":"string","description":"string","condition":"good|fair|poor","confidence":"high|medium|low","condition_notes":"string or null"}}],
   "materials_noted": ["string"],
-  "equipment": [
-    {{
-      "type": "string",
-      "manufacturer": "string or null",
-      "model": "string or null",
-      "notes": "string"
-    }}
-  ],
-  "general_notes": "A 2-3 sentence summary of the room's overall condition and notable observations",
-  "total_fixture_count": number
+  "equipment": [{{"type":"string","manufacturer":"string or null","model":"string or null","notes":"string"}}],
+  "general_notes": "2-3 sentence summary",
+  "total_fixture_count": 0
 }}"""
 
     content = []
-    for img_b64 in images_base64:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": img_b64
-            }
-        })
+    for img in images_base64:
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img}})
     content.append({"type": "text", "text": prompt})
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5-20250514",
         max_tokens=4096,
         messages=[{"role": "user", "content": content}]
     )
 
-    response_text = response.content[0].text
+    text = response.content[0].text
     try:
-        start = response_text.find('{')
-        end = response_text.rfind('}') + 1
-        return json.loads(response_text[start:end])
+        start = text.index('{')
+        end = text.rindex('}') + 1
+        result = json.loads(text[start:end])
+        for f in result.get('fixtures', []):
+            f['id'] = uid()
+            f['source'] = 'ai'
+            f['override'] = False
+            f['priority'] = None
+            f.setdefault('quantity', f.get('count', 1))
+        return result
     except:
         return {"fixtures": [], "error": "Failed to parse response"}
 
 
 # =============================================================================
-# EXPORT FUNCTIONS
+# DIFF ENGINE
 # =============================================================================
 
-def create_assessment_excel(assessments):
-    """Create Excel file with building assessment data."""
+def diff_snapshots(older, newer):
+    key = lambda f: f"{f.get('type','')}|{f.get('subtype','')}"
+    old_map = {key(f): f for f in (older.get('fixtures') or [])}
+    new_map = {key(f): f for f in (newer.get('fixtures') or [])}
+    added = [f for k, f in new_map.items() if k not in old_map]
+    removed = [f for k, f in old_map.items() if k not in new_map]
+    changed = []
+    for k, f in new_map.items():
+        if k in old_map:
+            o = old_map[k]
+            if o.get('quantity') != f.get('quantity') or o.get('condition') != f.get('condition'):
+                changed.append({'old': o, 'new': f})
+    return {'added': added, 'removed': removed, 'changed': changed}
+
+
+# =============================================================================
+# EXPORT HELPERS
+# =============================================================================
+
+def create_csv(rooms_dict):
+    rows = []
+    for r in rooms_dict.values():
+        snap = latest_snapshot(r)
+        for f in (snap.get('fixtures') or []):
+            rows.append({
+                'Room': r.get('label', r.get('id', '')),
+                'Room ID': r.get('id', ''),
+                'Fixture': fmt_type(f.get('type', '')),
+                'Quantity': f.get('quantity', f.get('count', 1)),
+                'Subtype': f.get('subtype', ''),
+                'Condition': f.get('condition', ''),
+                'Confidence': f.get('confidence', ''),
+                'Priority': f.get('priority', ''),
+                'Source': f.get('source', ''),
+            })
+    return pd.DataFrame(rows).to_csv(index=False) if rows else ""
+
+def create_excel(rooms_dict):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         summary_rows = []
-        for a in assessments:
-            room = a.get('room_name', 'Unknown')
-            total_fixtures = sum(f.get('count', 0) for f in a.get('fixtures', []))
-            summary_rows.append({
-                'Room': room,
-                'Ceiling': f"{a.get('ceiling_type', 'N/A')} ({a.get('ceiling_condition', 'N/A')})",
-                'Walls': f"{a.get('wall_type', 'N/A')} ({a.get('wall_condition', 'N/A')})",
-                'Flooring': f"{a.get('flooring_type', 'N/A')} ({a.get('flooring_condition', 'N/A')})",
-                'Total Fixtures': total_fixtures,
-                'Materials Noted': ', '.join(a.get('materials_noted', [])),
-                'Notes': a.get('general_notes', ''),
-            })
-        if summary_rows:
-            pd.DataFrame(summary_rows).to_excel(writer, sheet_name='Room Summary', index=False)
-
         fixture_rows = []
-        for a in assessments:
-            room = a.get('room_name', 'Unknown')
-            for f in a.get('fixtures', []):
-                fixture_rows.append({
-                    'Room': room,
-                    'Fixture Type': f.get('type', ''),
-                    'Count': f.get('count', 0),
-                    'Subtype': f.get('subtype', ''),
-                    'Description': f.get('description', ''),
-                    'Condition': f.get('condition', ''),
-                    'Condition Notes': f.get('condition_notes', ''),
-                })
-        if fixture_rows:
-            pd.DataFrame(fixture_rows).to_excel(writer, sheet_name='Fixture Inventory', index=False)
-
         equip_rows = []
-        for a in assessments:
-            room = a.get('room_name', 'Unknown')
-            for e in a.get('equipment', []):
+        for r in rooms_dict.values():
+            snap = latest_snapshot(r)
+            if not snap:
+                continue
+            label = r.get('label', r.get('id', ''))
+            total = sum(f.get('quantity', f.get('count', 1)) for f in snap.get('fixtures', []))
+            summary_rows.append({
+                'Room': label, 'Room ID': r.get('id', ''), 'Priority': r.get('priority', ''),
+                'Ceiling': f"{snap.get('ceiling_type','N/A')} ({snap.get('ceiling_condition','N/A')})",
+                'Walls': f"{snap.get('wall_type','N/A')} ({snap.get('wall_condition','N/A')})",
+                'Flooring': f"{snap.get('flooring_type','N/A')} ({snap.get('flooring_condition','N/A')})",
+                'Total Fixtures': total,
+                'Materials': ', '.join(snap.get('materials_noted', [])),
+                'Notes': snap.get('general_notes', ''),
+            })
+            for f in snap.get('fixtures', []):
+                fixture_rows.append({
+                    'Room': label, 'Fixture': fmt_type(f.get('type', '')),
+                    'Qty': f.get('quantity', f.get('count', 1)), 'Subtype': f.get('subtype', ''),
+                    'Condition': f.get('condition', ''), 'Confidence': f.get('confidence', ''),
+                    'Priority': f.get('priority', ''), 'Source': f.get('source', ''),
+                    'Description': f.get('description', ''),
+                })
+            for e in snap.get('equipment', []):
                 equip_rows.append({
-                    'Room': room,
-                    'Equipment Type': e.get('type', ''),
-                    'Manufacturer': e.get('manufacturer', ''),
-                    'Model': e.get('model', ''),
+                    'Room': label, 'Type': e.get('type', ''),
+                    'Manufacturer': e.get('manufacturer', ''), 'Model': e.get('model', ''),
                     'Notes': e.get('notes', ''),
                 })
+        if summary_rows:
+            pd.DataFrame(summary_rows).to_excel(writer, sheet_name='Room Summary', index=False)
+        if fixture_rows:
+            pd.DataFrame(fixture_rows).to_excel(writer, sheet_name='Fixtures', index=False)
         if equip_rows:
             pd.DataFrame(equip_rows).to_excel(writer, sheet_name='Equipment', index=False)
-
     return output.getvalue()
 
-
-def create_assessment_pdf(assessments, room_photos):
-    """Create a PDF building assessment report with embedded photos."""
+def create_pdf(rooms_dict, room_photos):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=60, leftMargin=60, topMargin=60, bottomMargin=60)
     elements = []
     styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('T', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor('#1E3A5F'), spaceAfter=20, alignment=TA_CENTER)
+    h_style = ParagraphStyle('H', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#1E3A5F'), spaceAfter=10, spaceBefore=10)
+    sub_style = ParagraphStyle('S', parent=styles['Heading3'], fontSize=11, textColor=colors.HexColor('#333'), spaceAfter=6)
 
-    title_style = ParagraphStyle('Title2', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor('#1E3A5F'), spaceAfter=20, alignment=TA_CENTER)
-    heading_style = ParagraphStyle('Heading', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#1E3A5F'), spaceAfter=10, spaceBefore=10)
-    subheading_style = ParagraphStyle('SubHead', parent=styles['Heading3'], fontSize=11, textColor=colors.HexColor('#333'), spaceAfter=6)
-
-    cond_colors = {
-        'good': colors.HexColor('#166534'),
-        'fair': colors.HexColor('#854d0e'),
-        'poor': colors.HexColor('#991b1b'),
-    }
-
-    # Title page
-    elements.append(Spacer(1, 1.5 * inch))
-    elements.append(Paragraph("BuildScan", title_style))
-    elements.append(Paragraph("Building Assessment Report", ParagraphStyle('Sub', parent=styles['Heading2'], alignment=TA_CENTER, textColor=colors.HexColor('#666'))))
-    elements.append(Spacer(1, 0.5 * inch))
-
-    total_rooms = len(assessments)
-    total_fixtures = sum(sum(f.get('count', 0) for f in a.get('fixtures', [])) for a in assessments)
-
-    summary_data = [
-        ['Report Date:', datetime.now().strftime('%B %d, %Y')],
-        ['Rooms Assessed:', str(total_rooms)],
-        ['Total Fixtures:', str(total_fixtures)],
-    ]
-    summary_table = Table(summary_data, colWidths=[2 * inch, 3.5 * inch])
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-    ]))
-    elements.append(summary_table)
+    proj = get_project()
+    elements.append(Spacer(1, 1 * inch))
+    elements.append(Paragraph("BuildScan Assessment Report", title_style))
+    if proj:
+        elements.append(Paragraph(proj.get('name', ''), ParagraphStyle('Sub', parent=styles['Heading2'], alignment=TA_CENTER, textColor=colors.HexColor('#666'))))
+    elements.append(Spacer(1, 0.3 * inch))
+    total_rooms = len(rooms_dict)
+    total_fix = sum(sum(f.get('quantity', f.get('count', 1)) for f in (latest_snapshot(r) or {}).get('fixtures', [])) for r in rooms_dict.values())
+    summary_data = [['Date:', datetime.now().strftime('%B %d, %Y')], ['Rooms:', str(total_rooms)], ['Fixtures:', str(total_fix)]]
+    t = Table(summary_data, colWidths=[1.5*inch, 3.5*inch])
+    t.setStyle(TableStyle([('BACKGROUND',(0,0),(0,-1),colors.HexColor('#f0f0f0')),('FONTNAME',(0,0),(0,-1),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),10),('GRID',(0,0),(-1,-1),0.5,colors.grey),('BOTTOMPADDING',(0,0),(-1,-1),6),('TOPPADDING',(0,0),(-1,-1),6)]))
+    elements.append(t)
     elements.append(PageBreak())
 
-    # Per-room pages
-    for analysis in assessments:
-        room_name = analysis.get('room_name', 'Unknown Room')
-        elements.append(Paragraph(room_name, heading_style))
+    for room in rooms_dict.values():
+        snap = latest_snapshot(room)
+        if not snap:
+            continue
+        label = room.get('label', room.get('id', ''))
+        elements.append(Paragraph(f"{label} ({room.get('id','')})", h_style))
 
-        # Photos
-        photos = room_photos.get(room_name, [])
-        if photos:
-            for photo_b64 in photos[:4]:
-                try:
-                    img_bytes = base64.b64decode(photo_b64)
-                    img_reader = ImageReader(io.BytesIO(img_bytes))
-                    iw, ih = img_reader.getSize()
-                    aspect = ih / iw
-                    display_w = 3.5 * inch
-                    display_h = display_w * aspect
-                    from reportlab.platypus import RLImage
-                    elements.append(RLImage(io.BytesIO(img_bytes), width=display_w, height=display_h))
-                    elements.append(Spacer(1, 0.1 * inch))
-                except:
-                    pass
+        photos = room_photos.get(room.get('id', ''), [])
+        for photo_b64 in photos[:3]:
+            try:
+                img_bytes = base64.b64decode(photo_b64)
+                ir = ImageReader(io.BytesIO(img_bytes))
+                iw, ih = ir.getSize()
+                dw = 3 * inch
+                dh = dw * (ih / iw)
+                from reportlab.platypus import Image as RLImage
+                elements.append(RLImage(io.BytesIO(img_bytes), width=dw, height=dh))
+                elements.append(Spacer(1, 0.1 * inch))
+            except:
+                pass
 
         # Surfaces
-        elements.append(Paragraph("Surfaces", subheading_style))
-        surface_data = [['Surface', 'Type', 'Condition']]
-        for s_label, s_key, c_key in [('Ceiling', 'ceiling_type', 'ceiling_condition'),
-                                       ('Walls', 'wall_type', 'wall_condition'),
-                                       ('Flooring', 'flooring_type', 'flooring_condition')]:
-            surface_data.append([s_label, analysis.get(s_key, 'N/A'), (analysis.get(c_key, '') or '').title()])
-
-        s_table = Table(surface_data, colWidths=[1.2 * inch, 2.5 * inch, 1.5 * inch])
-        s_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4F46E5')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        elements.append(s_table)
-        elements.append(Spacer(1, 0.15 * inch))
+        elements.append(Paragraph("Surfaces", sub_style))
+        sd = [['Surface', 'Type', 'Condition']]
+        for sl, sk, ck in [('Ceiling','ceiling_type','ceiling_condition'),('Walls','wall_type','wall_condition'),('Flooring','flooring_type','flooring_condition')]:
+            sd.append([sl, snap.get(sk, 'N/A'), (snap.get(ck, '') or '').title()])
+        st2 = Table(sd, colWidths=[1.2*inch, 2.5*inch, 1.5*inch])
+        st2.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#4F46E5')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),9),('GRID',(0,0),(-1,-1),0.5,colors.grey),('BOTTOMPADDING',(0,0),(-1,-1),5),('TOPPADDING',(0,0),(-1,-1),5)]))
+        elements.append(st2)
+        elements.append(Spacer(1, 0.1 * inch))
 
         # Fixtures
-        fixtures = analysis.get('fixtures', [])
+        fixtures = snap.get('fixtures', [])
         if fixtures:
-            elements.append(Paragraph("Fixtures", subheading_style))
-            fix_data = [['Type', 'Count', 'Subtype', 'Condition']]
-            for f in sorted(fixtures, key=lambda x: -x.get('count', 0)):
-                fix_data.append([
-                    f.get('type', '').replace('_', ' ').title(),
-                    str(f.get('count', 0)),
-                    f.get('subtype', '') or '',
-                    (f.get('condition', '') or '').title(),
-                ])
-            f_table = Table(fix_data, colWidths=[2 * inch, 0.7 * inch, 1.8 * inch, 1 * inch])
-            f_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4F46E5')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-                ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ]))
-            # Color-code condition cells
-            for i, f in enumerate(sorted(fixtures, key=lambda x: -x.get('count', 0)), start=1):
-                cond = (f.get('condition', '') or '').lower()
-                if cond in cond_colors:
-                    f_table.setStyle(TableStyle([('TEXTCOLOR', (3, i), (3, i), cond_colors[cond])]))
-            elements.append(f_table)
-            elements.append(Spacer(1, 0.15 * inch))
+            elements.append(Paragraph("Fixtures", sub_style))
+            fd = [['Type', 'Qty', 'Subtype', 'Condition', 'Confidence']]
+            for f in sorted(fixtures, key=lambda x: -(x.get('quantity', x.get('count', 1)))):
+                fd.append([fmt_type(f.get('type', '')), str(f.get('quantity', f.get('count', 1))), f.get('subtype', ''), (f.get('condition', '') or '').title(), (f.get('confidence', '') or '').title()])
+            ft = Table(fd, colWidths=[1.8*inch, 0.5*inch, 1.3*inch, 0.8*inch, 0.8*inch])
+            ft.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#4F46E5')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),8),('GRID',(0,0),(-1,-1),0.5,colors.grey),('BOTTOMPADDING',(0,0),(-1,-1),4),('TOPPADDING',(0,0),(-1,-1),4)]))
+            elements.append(ft)
 
-        # Equipment
-        equipment = analysis.get('equipment', [])
-        if equipment:
-            elements.append(Paragraph("Equipment", subheading_style))
-            for e in equipment:
-                mfg = e.get('manufacturer', '') or ''
-                model = e.get('model', '') or ''
-                elements.append(Paragraph(f"<b>{e.get('type', 'Unknown')}</b>: {mfg} {model}".strip(), styles['Normal']))
-                if e.get('notes'):
-                    elements.append(Paragraph(f"<i>{e['notes']}</i>", styles['Normal']))
-
-        # Notes
-        notes = analysis.get('general_notes', '')
+        notes = snap.get('general_notes', '')
         if notes:
-            elements.append(Spacer(1, 0.1 * inch))
+            elements.append(Spacer(1, 0.1*inch))
             elements.append(Paragraph(f"<b>Notes:</b> {notes}", styles['Normal']))
-
-        materials = analysis.get('materials_noted', [])
-        if materials:
-            elements.append(Paragraph(f"<b>Materials:</b> {', '.join(materials)}", styles['Normal']))
-
         elements.append(PageBreak())
 
-    # Footer
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
-    elements.append(Paragraph(
-        "Report generated by BuildScan using AI-assisted visual analysis. "
-        "This assessment is based on photographs and should be supplemented with on-site inspection.",
-        footer_style
-    ))
-
+    elements.append(Paragraph("Generated by BuildScan — AI-assisted visual analysis.", ParagraphStyle('F', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)))
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
 
 
 # =============================================================================
-# MAIN APP
+# PAGE CONFIG
 # =============================================================================
 
-st.markdown('<p class="main-header">🏗️ BuildScan</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">AI-Powered Building Assessment for Construction Companies</p>', unsafe_allow_html=True)
+st.set_page_config(page_title="BuildScan", page_icon="🏗️", layout="wide")
+
+st.markdown("""
+<style>
+    .cond-good { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .cond-fair { background: #fef9c3; color: #854d0e; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .cond-poor { background: #fecaca; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .conf-high { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .conf-medium { background: #f1f5f9; color: #475569; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .conf-low { background: #fef9c3; color: #854d0e; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .surface-tag { background: #e0e7ff; color: #3730a3; padding: 3px 10px; border-radius: 6px; font-size: 0.85rem; margin: 2px; display: inline-block; }
+    .material-tag { background: #fef3c7; color: #92400e; padding: 3px 10px; border-radius: 6px; font-size: 0.85rem; margin: 2px; display: inline-block; }
+    .priority-urgent { border-left: 4px solid #dc2626 !important; }
+    .priority-watch { border-left: 4px solid #d97706 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+def cond_badge(c):
+    c = (c or '').lower()
+    if c == 'good': return '<span class="cond-good">Good</span>'
+    if c == 'fair': return '<span class="cond-fair">Fair</span>'
+    if c == 'poor': return '<span class="cond-poor">Poor</span>'
+    return ''
+
+def conf_badge(c):
+    c = (c or '').lower()
+    if c == 'high': return '<span class="conf-high">✓ High</span>'
+    if c == 'medium': return '<span class="conf-medium">~ Medium</span>'
+    return '<span class="conf-low">? Low</span>'
+
+def priority_badge(p):
+    if p == 'urgent': return '🔴 Urgent'
+    if p == 'watch': return '🟡 Watch'
+    if p == 'ok': return '🟢 OK'
+    return ''
+
+
+# =============================================================================
+# HEADER
+# =============================================================================
+
+st.markdown('<h1 style="margin-bottom:0">🏗️ BuildScan</h1>', unsafe_allow_html=True)
+st.caption("AI-Powered Building Assessment for Construction Companies")
 
 api_key = get_api_key()
 
-# Sidebar
-with st.sidebar:
-    st.header("Assessment Summary")
 
-    if api_key:
-        st.success("API Connected")
-    else:
-        st.warning("No API key found")
-        key_input = st.text_input("Enter Anthropic API Key", type="password", key="sidebar_api_key")
-        if key_input:
-            st.session_state.user_api_key = key_input
+# =============================================================================
+# SIDEBAR
+# =============================================================================
+
+with st.sidebar:
+    st.header("Projects")
+
+    # Project selector
+    projects = st.session_state.projects
+    project_names = {pid: p['name'] for pid, p in projects.items()}
+
+    if project_names:
+        selected = st.selectbox(
+            "Active Project",
+            options=list(project_names.keys()),
+            format_func=lambda x: project_names[x],
+            index=list(project_names.keys()).index(st.session_state.active_project) if st.session_state.active_project in project_names else 0,
+            key="project_selector"
+        )
+        st.session_state.active_project = selected
+
+    # New project
+    with st.expander("New Project", expanded=not bool(projects)):
+        new_name = st.text_input("Project Name", placeholder="e.g., 123 Main St Renovation", key="new_proj_name")
+        if st.button("Create Project", type="primary", disabled=not new_name):
+            pid = uid()
+            st.session_state.projects[pid] = {'id': pid, 'name': new_name, 'createdAt': datetime.now().isoformat(), 'buildings': {}}
+            st.session_state.active_project = pid
             st.rerun()
 
     st.divider()
 
-    total_fixtures = sum(
-        sum(f.get('count', 0) for f in a.get('fixtures', []))
-        for a in st.session_state.room_analyses
-    )
+    # API key
+    if api_key:
+        st.success("API Connected")
+    else:
+        st.warning("No API Key")
+        key_input = st.text_input("Anthropic API Key", type="password", key="api_key_input")
+        if key_input:
+            st.session_state.user_api_key = key_input
+            st.rerun()
 
-    st.metric("Rooms Assessed", len(st.session_state.room_analyses))
-    st.metric("Total Fixtures", total_fixtures)
-
-    if st.session_state.room_analyses:
-        fixture_totals = {}
-        for a in st.session_state.room_analyses:
-            for f in a.get('fixtures', []):
-                ftype = f.get('type', 'unknown')
-                fixture_totals[ftype] = fixture_totals.get(ftype, 0) + f.get('count', 0)
-
-        if fixture_totals:
-            st.divider()
-            st.subheader("Fixture Totals")
-            for ftype, count in sorted(fixture_totals.items(), key=lambda x: -x[1]):
-                label = ftype.replace('_', ' ').title()
-                st.write(f"**{label}:** {count}")
+    # Stats
+    rooms = get_rooms()
+    if rooms:
+        assessed = sum(1 for r in rooms.values() if is_assessed(r))
+        total_fix = sum(
+            sum(f.get('quantity', f.get('count', 1)) for f in (latest_snapshot(r) or {}).get('fixtures', []))
+            for r in rooms.values()
+        )
+        st.divider()
+        st.metric("Rooms", f"{assessed}/{len(rooms)} assessed")
+        st.metric("Total Fixtures", total_fix)
 
     st.divider()
 
-    if st.button("Clear All Data"):
-        st.session_state.room_analyses = []
-        st.session_state.room_photos = {}
-        st.rerun()
-
-
-# Main content tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Add Room", "Fixture Inventory", "Building Report", "Export"])
-
-# ==================== TAB 1: ADD ROOM ====================
-with tab1:
-    st.header("Assess a Room")
-
-    col1, col2 = st.columns([1, 1])
-
+    # Backup
+    col1, col2 = st.columns(2)
     with col1:
-        room_type = st.selectbox(
-            "Room Type",
-            ["Kitchen", "Living Room", "Bedroom", "Bathroom", "Basement",
-             "Garage", "Office", "Dining Room", "Hallway", "Stairwell",
-             "Mechanical Room", "Utility Room", "Attic", "Exterior",
-             "Roof", "Crawl Space", "Storage", "Other"]
-        )
-
+        if st.button("Export Backup", use_container_width=True):
+            data = json.dumps({'projects': st.session_state.projects, 'active_project': st.session_state.active_project}, indent=2, default=str)
+            st.download_button("Download", data, f"BuildScan_Backup_{datetime.now().strftime('%Y%m%d')}.json", "application/json", use_container_width=True)
     with col2:
-        room_label = st.text_input(
-            "Room Label (optional)",
-            placeholder=f"e.g., Master Bath, Unit 2A {room_type}",
-            help="Give this room a custom name to distinguish it from other rooms of the same type. Leave blank for auto-naming."
-        )
-
-    # Determine final room name
-    if room_type == "Other" and not room_label:
-        room_label = st.text_input("Enter custom room/area name")
-    room_name = room_label.strip() if room_label.strip() else auto_room_label(room_type)
-
-    # Check for duplicate
-    existing_names = [a.get('room_name', '') for a in st.session_state.room_analyses]
-    is_update = room_name in existing_names
-
-    if is_update:
-        st.info(f"A room named '{room_name}' already exists. Analyzing will update the existing assessment.")
-
-    st.subheader("Upload Room Photos")
-    st.caption("Upload multiple photos from different angles for the most complete assessment. All photos are analyzed together — duplicates are automatically handled.")
-
-    uploaded_files = st.file_uploader(
-        "Choose photos",
-        type=['jpg', 'jpeg', 'png'],
-        accept_multiple_files=True,
-        key="room_photos_uploader"
-    )
-
-    if uploaded_files:
-        cols = st.columns(min(len(uploaded_files), 3))
-        for i, file in enumerate(uploaded_files):
-            with cols[i % 3]:
-                st.image(file, caption=f"Photo {i+1}", use_container_width=True)
-
-    if st.button("Analyze Room", type="primary", disabled=not uploaded_files or not api_key):
-        if not api_key:
-            st.error("API key not configured.")
-        else:
+        uploaded_backup = st.file_uploader("Import", type=['json'], key="backup_upload", label_visibility="collapsed")
+        if uploaded_backup:
             try:
+                data = json.loads(uploaded_backup.read())
+                st.session_state.projects = data.get('projects', {})
+                st.session_state.active_project = data.get('active_project')
+                st.rerun()
+            except:
+                st.error("Invalid backup file")
+
+
+# =============================================================================
+# MAIN TABS
+# =============================================================================
+
+proj = get_project()
+if not proj:
+    st.info("Create a project in the sidebar to get started.")
+    st.stop()
+
+# Ensure building exists
+building = get_building()
+if not building:
+    st.subheader(f"Project: {proj['name']}")
+    bname = st.text_input("Building Name", value="Main Building", key="new_bldg_name")
+    if st.button("Add Building", type="primary"):
+        bid = uid()
+        proj['buildings'][bid] = {'id': bid, 'name': bname, 'floors': [], 'rooms': {}}
+        st.rerun()
+    st.stop()
+
+tab_rooms, tab_inventory, tab_report, tab_export = st.tabs(["🏢 Rooms", "📋 Inventory", "📊 Report", "📥 Export"])
+
+rooms = get_rooms()
+room_photos = {}  # Build photo map for export
+for rid, r in rooms.items():
+    snap = latest_snapshot(r)
+    if snap and snap.get('photos'):
+        room_photos[rid] = [p['thumbUri'] for p in snap['photos']]
+
+
+# =============================================================================
+# TAB: ROOMS
+# =============================================================================
+
+with tab_rooms:
+    st.subheader(f"{building['name']} — Rooms")
+
+    # Floor management
+    floors = building.get('floors', [])
+    assessed_count = sum(1 for r in rooms.values() if is_assessed(r))
+
+    if rooms:
+        st.progress(assessed_count / len(rooms) if rooms else 0, text=f"{assessed_count}/{len(rooms)} rooms assessed")
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        with st.popover("+ Add Floor"):
+            fl = st.text_input("Floor Label", placeholder="e.g., 1, 2, B1", key="add_floor_label")
+            fsecs = st.text_input("Sections (optional, comma-separated)", placeholder="e.g., A, B, North", key="add_floor_secs")
+            if st.button("Add Floor", key="add_floor_btn"):
+                secs = [{'id': uid(), 'label': s.strip()} for s in fsecs.split(',') if s.strip()] if fsecs else []
+                building.setdefault('floors', []).append({'id': uid(), 'label': fl, 'sections': secs})
+                st.rerun()
+    with col_b:
+        with st.popover("+ Add Room"):
+            room_type = st.selectbox("Type", ROOM_TYPES, key="add_room_type")
+            room_label = st.text_input("Label (optional)", placeholder="e.g., Master Bath", key="add_room_label")
+            floor_opts = {f['id']: f"Floor {f['label']}" for f in floors}
+            floor_sel = st.selectbox("Floor", options=list(floor_opts.keys()), format_func=lambda x: floor_opts[x], key="add_room_floor") if floor_opts else None
+            if st.button("Add Room", key="add_room_btn"):
+                rid = auto_room_id(building, floor_sel)
+                label = room_label.strip() if room_label.strip() else room_type
+                building.setdefault('rooms', {})[rid] = {'id': rid, 'label': label, 'floorId': floor_sel, 'sectionId': None, 'priority': None, 'snapshots': []}
+                st.rerun()
+    with col_c:
+        with st.popover("+ Bulk Add"):
+            bulk_text = st.text_area("One room per line", placeholder="Room 101\nConference A\nBreak Room", key="bulk_rooms")
+            bulk_floor = st.selectbox("Floor", options=[None] + [f['id'] for f in floors], format_func=lambda x: f"Floor {next((f['label'] for f in floors if f['id']==x), 'None')}" if x else "No floor", key="bulk_floor")
+            if st.button("Add All", key="bulk_btn") and bulk_text:
+                for line in bulk_text.strip().split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rid = auto_room_id(building, bulk_floor)
+                    building.setdefault('rooms', {})[rid] = {'id': rid, 'label': line, 'floorId': bulk_floor, 'sectionId': None, 'priority': None, 'snapshots': []}
+                st.rerun()
+
+    # Display rooms grouped by floor
+    if floors:
+        for floor in floors:
+            floor_rooms = {rid: r for rid, r in rooms.items() if r.get('floorId') == floor['id']}
+            floor_assessed = sum(1 for r in floor_rooms.values() if is_assessed(r))
+            st.markdown(f"### Floor {floor['label']}  ({floor_assessed}/{len(floor_rooms)} assessed)")
+
+            if floor_rooms:
+                cols = st.columns(min(len(floor_rooms), 4))
+                for i, (rid, room) in enumerate(floor_rooms.items()):
+                    with cols[i % 4]:
+                        assessed = is_assessed(room)
+                        snap = latest_snapshot(room)
+                        fix_count = sum(f.get('quantity', f.get('count', 1)) for f in (snap.get('fixtures', []) if snap else []))
+
+                        with st.container(border=True):
+                            st.markdown(f"**{room['label']}** `{room['id']}`")
+                            if room.get('priority'):
+                                st.markdown(priority_badge(room['priority']))
+                            if assessed:
+                                st.caption(f"{fix_count} fixtures")
+                            else:
+                                st.caption("_Not yet assessed_")
+    else:
+        # No floors, show flat list
+        if rooms:
+            cols = st.columns(min(len(rooms), 4))
+            for i, (rid, room) in enumerate(rooms.items()):
+                with cols[i % 4]:
+                    with st.container(border=True):
+                        st.markdown(f"**{room['label']}** `{room['id']}`")
+
+    st.divider()
+
+    # Room detail
+    if rooms:
+        selected_room_id = st.selectbox("Select room to view/assess", options=list(rooms.keys()), format_func=lambda x: f"{rooms[x]['label']} ({x})", key="room_detail_select")
+        room = rooms[selected_room_id]
+        snap = latest_snapshot(room) or {}
+        fixtures = snap.get('fixtures', [])
+
+        st.markdown(f"## {room['label']} — `{room['id']}`")
+
+        # Priority
+        new_pri = st.selectbox("Priority", ['', 'urgent', 'watch', 'ok'], index=['', 'urgent', 'watch', 'ok'].index(room.get('priority') or ''), format_func=lambda x: priority_badge(x) if x else 'None', key=f"pri_{selected_room_id}")
+        room['priority'] = new_pri if new_pri else None
+
+        # Photos
+        st.markdown("### Photos")
+        photos = snap.get('photos', [])
+        if photos:
+            photo_cols = st.columns(min(len(photos), 4))
+            for i, p in enumerate(photos[:4]):
+                with photo_cols[i % 4]:
+                    st.image(base64.b64decode(p['thumbUri']), use_container_width=True)
+
+        uploaded_files = st.file_uploader("Upload room photos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True, key=f"upload_{selected_room_id}")
+        if uploaded_files:
+            preview_cols = st.columns(min(len(uploaded_files), 3))
+            for i, f in enumerate(uploaded_files):
+                with preview_cols[i % 3]:
+                    st.image(f, use_container_width=True)
+
+        # Analyze
+        if st.button("🔍 Analyze Room with AI", type="primary", disabled=not uploaded_files or not api_key, key=f"analyze_{selected_room_id}"):
+            with st.spinner("Analyzing... Claude is identifying fixtures, materials, and conditions..."):
                 client = anthropic.Anthropic(api_key=api_key)
+                images = [compress_for_api(f) for f in uploaded_files]
+                result = analyze_room(client, images, room['label'])
 
-                existing_idx = None
-                for idx, a in enumerate(st.session_state.room_analyses):
-                    if a.get('room_name') == room_name:
-                        existing_idx = idx
-                        break
+            if result and 'error' not in result:
+                # Save thumbnails
+                thumbnails = []
+                for f in uploaded_files:
+                    try:
+                        thumbnails.append({'thumbUri': make_thumbnail(f), 'takenAt': datetime.now().isoformat()})
+                    except:
+                        pass
 
-                photo_count = len(uploaded_files)
-                with st.spinner(f"Analyzing {photo_count} photo{'s' if photo_count > 1 else ''}... Claude is identifying fixtures, materials, and conditions..."):
-                    images_base64 = [encode_image(f) for f in uploaded_files]
-                    result = analyze_room_assessment(client, images_base64, room_name)
-
-                if 'error' not in result:
-                    result['room_name'] = room_name
-                    result['room_type'] = room_type
-                    result['photo_count'] = photo_count
-
-                    # Store thumbnails
-                    thumbnails = []
-                    for f in uploaded_files:
-                        try:
-                            thumbnails.append(make_thumbnail(f))
-                        except:
-                            pass
-                    st.session_state.room_photos[room_name] = thumbnails
-
-                    if existing_idx is not None:
-                        st.session_state.room_analyses[existing_idx] = result
-                    else:
-                        st.session_state.room_analyses.append(result)
-
-                    fixture_count = sum(f.get('count', 0) for f in result.get('fixtures', []))
-                    st.success(f"Assessment complete! Found {fixture_count} fixtures in {room_name} (from {photo_count} photo{'s' if photo_count > 1 else ''}).")
-                    st.balloons()
+                # Create new snapshot or update
+                existing_snap = latest_snapshot(room)
+                if existing_snap and existing_snap.get('fixtures') and len(room.get('snapshots', [])) < MAX_SNAPSHOTS:
+                    # New snapshot for comparison
+                    new_snap = {'takenAt': datetime.now().isoformat(), 'photos': thumbnails, 'fixtures': result.get('fixtures', []),
+                                'ceiling_type': result.get('ceiling_type'), 'ceiling_condition': result.get('ceiling_condition'),
+                                'wall_type': result.get('wall_type'), 'wall_condition': result.get('wall_condition'),
+                                'flooring_type': result.get('flooring_type'), 'flooring_condition': result.get('flooring_condition'),
+                                'materials_noted': result.get('materials_noted', []), 'equipment': result.get('equipment', []),
+                                'general_notes': result.get('general_notes', '')}
+                    room.setdefault('snapshots', []).append(new_snap)
                 else:
-                    st.error("Failed to analyze photos. Please try again.")
+                    s = ensure_snapshot(room)
+                    s['photos'] = thumbnails
+                    s['fixtures'] = result.get('fixtures', [])
+                    s['ceiling_type'] = result.get('ceiling_type')
+                    s['ceiling_condition'] = result.get('ceiling_condition')
+                    s['wall_type'] = result.get('wall_type')
+                    s['wall_condition'] = result.get('wall_condition')
+                    s['flooring_type'] = result.get('flooring_type')
+                    s['flooring_condition'] = result.get('flooring_condition')
+                    s['materials_noted'] = result.get('materials_noted', [])
+                    s['equipment'] = result.get('equipment', [])
+                    s['general_notes'] = result.get('general_notes', '')
+                    s['takenAt'] = datetime.now().isoformat()
 
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+                fix_count = sum(f.get('quantity', f.get('count', 1)) for f in result.get('fixtures', []))
+                st.success(f"Found {fix_count} fixtures!")
+                st.rerun()
+            else:
+                st.error("Analysis failed. Check your API key and try again.")
 
+        # Surfaces
+        if snap.get('ceiling_type') or snap.get('wall_type') or snap.get('flooring_type'):
+            st.markdown("### Surfaces")
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                st.markdown(f"**Ceiling:** {snap.get('ceiling_type', 'N/A')} {cond_badge(snap.get('ceiling_condition'))}", unsafe_allow_html=True)
+            with sc2:
+                st.markdown(f"**Walls:** {snap.get('wall_type', 'N/A')} {cond_badge(snap.get('wall_condition'))}", unsafe_allow_html=True)
+            with sc3:
+                st.markdown(f"**Flooring:** {snap.get('flooring_type', 'N/A')} {cond_badge(snap.get('flooring_condition'))}", unsafe_allow_html=True)
 
-# ==================== TAB 2: FIXTURE INVENTORY ====================
-with tab2:
-    st.header("Fixture Inventory")
+        # Fixtures
+        if fixtures:
+            st.markdown("### Fixtures")
+            for i, f in enumerate(sorted(fixtures, key=lambda x: -(x.get('quantity', x.get('count', 1))))):
+                fc1, fc2, fc3, fc4, fc5 = st.columns([2, 0.5, 1.5, 1, 1])
+                with fc1:
+                    icon = "✏️ " if f.get('source') == 'manual' or f.get('override') else ""
+                    st.markdown(f"{icon}**{fmt_type(f.get('type', ''))}** {priority_badge(f.get('priority', ''))}")
+                with fc2:
+                    st.write(f.get('quantity', f.get('count', 1)))
+                with fc3:
+                    st.caption(f"{f.get('subtype', '')} {f.get('description', '')}")
+                with fc4:
+                    st.markdown(cond_badge(f.get('condition')), unsafe_allow_html=True)
+                with fc5:
+                    st.markdown(conf_badge(f.get('confidence')), unsafe_allow_html=True)
 
-    if st.session_state.room_analyses:
-        all_fixtures = []
-        for a in st.session_state.room_analyses:
-            for f in a.get('fixtures', []):
-                all_fixtures.append({'room': a.get('room_name', 'Unknown'), **f})
-
-        total = sum(f.get('count', 0) for f in all_fixtures)
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Fixtures", total)
-        with col2:
-            st.metric("Rooms Assessed", len(st.session_state.room_analyses))
-        with col3:
-            types = set(f.get('type') for f in all_fixtures)
-            st.metric("Fixture Types", len(types))
-
-        st.divider()
-
-        rooms = list(set(a.get('room_name', 'Unknown') for a in st.session_state.room_analyses))
-        selected_room = st.selectbox("Filter by Room", ["All Rooms"] + sorted(rooms), key="inv_room_filter")
-
-        analyses_to_show = st.session_state.room_analyses
-        if selected_room != "All Rooms":
-            analyses_to_show = [a for a in analyses_to_show if a.get('room_name') == selected_room]
-
-        for a_idx, analysis in enumerate(st.session_state.room_analyses):
-            if selected_room != "All Rooms" and analysis.get('room_name') != selected_room:
-                continue
-
-            room = analysis.get('room_name', 'Unknown')
-            fixtures = analysis.get('fixtures', [])
-            fixture_count = sum(f.get('count', 0) for f in fixtures)
-
-            with st.expander(f"{room} — {fixture_count} fixtures", expanded=True):
-                # Surfaces with condition
-                surfaces = []
-                for s_label, s_key, c_key in [('Ceiling', 'ceiling_type', 'ceiling_condition'),
-                                               ('Walls', 'wall_type', 'wall_condition'),
-                                               ('Floor', 'flooring_type', 'flooring_condition')]:
-                    s_val = analysis.get(s_key)
-                    s_cond = analysis.get(c_key, '')
-                    if s_val:
-                        cond_html = f" {condition_badge(s_cond)}" if s_cond else ""
-                        surfaces.append(f'<span class="surface-tag">{s_label}: {s_val}</span>{cond_html}')
-
-                if surfaces:
-                    st.markdown(" ".join(surfaces), unsafe_allow_html=True)
-                    st.write("")
-
-                # Fixtures with condition
-                if fixtures:
-                    for f_idx, f in enumerate(sorted(fixtures, key=lambda x: -x.get('count', 0))):
-                        label = f.get('type', '').replace('_', ' ').title()
-                        count = f.get('count', 0)
-                        subtype = f.get('subtype', '')
-                        desc = f.get('description', '')
-                        cond = f.get('condition', '')
-                        cond_notes = f.get('condition_notes', '')
-
-                        col1, col2, col3, col4 = st.columns([1.2, 2, 1, 1.5])
-                        with col1:
-                            st.markdown(f"**{count}x** {label}")
-                        with col2:
-                            detail = subtype
-                            if desc:
-                                detail = f"{subtype} — {desc}" if subtype else desc
-                            st.write(detail or "—")
-                        with col3:
-                            st.markdown(condition_badge(cond), unsafe_allow_html=True)
-                        with col4:
-                            st.write(cond_notes or "")
-
-                # Materials
-                materials = analysis.get('materials_noted', [])
-                if materials:
-                    st.write("")
-                    st.markdown("**Materials:** " + " ".join(f'<span class="material-tag">{m}</span>' for m in materials), unsafe_allow_html=True)
-
-                # Manual edit section
-                st.write("")
-                with st.expander("Edit Fixtures", expanded=False):
-                    # Delete fixtures
-                    if fixtures:
-                        st.caption("Remove a fixture:")
-                        for f_idx, f in enumerate(fixtures):
-                            f_label = f.get('type', '').replace('_', ' ').title()
-                            col_a, col_b = st.columns([3, 1])
-                            with col_a:
-                                st.write(f"{f.get('count', 0)}x {f_label}")
-                            with col_b:
-                                if st.button("Delete", key=f"del_{room}_{f_idx}"):
-                                    st.session_state.room_analyses[a_idx]['fixtures'].pop(f_idx)
-                                    st.rerun()
-
-                    # Add fixture form
-                    st.caption("Add a fixture:")
-                    with st.form(key=f"add_fixture_{room}_{a_idx}"):
-                        add_c1, add_c2 = st.columns(2)
-                        with add_c1:
-                            new_type = st.selectbox("Type", FIXTURE_TYPES, format_func=lambda x: x.replace('_', ' ').title(), key=f"new_type_{room}")
-                            new_count = st.number_input("Count", min_value=1, value=1, key=f"new_count_{room}")
-                        with add_c2:
-                            new_subtype = st.text_input("Subtype", key=f"new_sub_{room}")
-                            new_condition = st.selectbox("Condition", ["good", "fair", "poor"], key=f"new_cond_{room}")
-                        new_desc = st.text_input("Description", key=f"new_desc_{room}")
-
-                        if st.form_submit_button("Add Fixture"):
-                            st.session_state.room_analyses[a_idx]['fixtures'].append({
-                                'type': new_type,
-                                'count': new_count,
-                                'subtype': new_subtype,
-                                'condition': new_condition,
-                                'description': new_desc,
-                                'condition_notes': '',
-                            })
+        # Manual add/edit
+        with st.expander("Edit Fixtures", expanded=False):
+            # Delete
+            if fixtures:
+                for i, f in enumerate(fixtures):
+                    dc1, dc2 = st.columns([3, 1])
+                    with dc1:
+                        st.write(f"{f.get('quantity', f.get('count', 1))}x {fmt_type(f.get('type', ''))}")
+                    with dc2:
+                        if st.button("Delete", key=f"del_{selected_room_id}_{i}"):
+                            fixtures.pop(i)
                             st.rerun()
+
+            # Add
+            st.markdown("**Add Fixture**")
+            with st.form(key=f"add_fix_{selected_room_id}"):
+                af1, af2 = st.columns(2)
+                with af1:
+                    new_type = st.selectbox("Type", FIXTURE_TYPES, format_func=fmt_type, key=f"nft_{selected_room_id}")
+                    new_qty = st.number_input("Quantity", min_value=1, value=1, key=f"nfq_{selected_room_id}")
+                with af2:
+                    new_sub = st.text_input("Subtype", key=f"nfs_{selected_room_id}")
+                    new_cond = st.selectbox("Condition", ['good', 'fair', 'poor'], key=f"nfc_{selected_room_id}")
+                new_desc = st.text_input("Description", key=f"nfd_{selected_room_id}")
+                new_pri = st.selectbox("Priority", ['', 'urgent', 'watch', 'ok'], format_func=lambda x: priority_badge(x) if x else 'None', key=f"nfp_{selected_room_id}")
+                if st.form_submit_button("Add Fixture"):
+                    s = ensure_snapshot(room)
+                    s['fixtures'].append({
+                        'id': uid(), 'type': new_type, 'name': new_type, 'quantity': new_qty,
+                        'subtype': new_sub, 'description': new_desc, 'condition': new_cond,
+                        'confidence': 'high', 'source': 'manual', 'override': False,
+                        'priority': new_pri if new_pri else None, 'condition_notes': ''
+                    })
+                    st.rerun()
+
+        # Comparison
+        if len(room.get('snapshots', [])) >= 2:
+            with st.expander("Compare Assessments"):
+                newer = room['snapshots'][-1]
+                older = room['snapshots'][-2]
+                st.markdown(f"**Previous:** {older.get('takenAt', 'N/A')[:16]}  →  **Current:** {newer.get('takenAt', 'N/A')[:16]}")
+                diff = diff_snapshots(older, newer)
+                if diff['added']:
+                    st.markdown(f"**Added ({len(diff['added'])})**")
+                    for f in diff['added']:
+                        st.success(f"{fmt_type(f.get('type',''))} × {f.get('quantity', f.get('count', 1))}")
+                if diff['removed']:
+                    st.markdown(f"**Removed ({len(diff['removed'])})**")
+                    for f in diff['removed']:
+                        st.error(f"{fmt_type(f.get('type',''))} × {f.get('quantity', f.get('count', 1))}")
+                if diff['changed']:
+                    st.markdown(f"**Changed ({len(diff['changed'])})**")
+                    for c in diff['changed']:
+                        st.warning(f"{fmt_type(c['old'].get('type',''))}: {c['old'].get('quantity', c['old'].get('count',1))} → {c['new'].get('quantity', c['new'].get('count',1))}")
+                if not diff['added'] and not diff['removed'] and not diff['changed']:
+                    st.info("No changes between assessments.")
+
+        # Materials & Equipment
+        if snap.get('materials_noted'):
+            st.markdown("### Materials")
+            st.markdown(" ".join(f'<span class="material-tag">{m}</span>' for m in snap['materials_noted']), unsafe_allow_html=True)
+
+        if snap.get('equipment'):
+            st.markdown("### Equipment")
+            for e in snap['equipment']:
+                st.write(f"**{fmt_type(e.get('type', ''))}**: {e.get('manufacturer', '')} {e.get('model', '')}")
+                if e.get('notes'):
+                    st.caption(e['notes'])
+
+        if snap.get('general_notes'):
+            st.info(snap['general_notes'])
+
+
+# =============================================================================
+# TAB: INVENTORY
+# =============================================================================
+
+with tab_inventory:
+    st.subheader("Fixture Inventory")
+
+    all_fixtures = []
+    for rid, r in rooms.items():
+        s = latest_snapshot(r)
+        for f in (s.get('fixtures', []) if s else []):
+            all_fixtures.append({**f, '_room': r.get('label', rid), '_room_id': rid, '_room_pri': r.get('priority')})
+
+    total = sum(f.get('quantity', f.get('count', 1)) for f in all_fixtures)
+    types = set(f.get('type') for f in all_fixtures)
+
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        st.metric("Total Fixtures", total)
+    with mc2:
+        st.metric("Fixture Types", len(types))
+    with mc3:
+        st.metric("Rooms Assessed", sum(1 for r in rooms.values() if is_assessed(r)))
+
+    if all_fixtures:
+        # Priority view toggle
+        priority_sort = st.toggle("Priority view (urgent first)", key="inv_priority_sort")
+
+        if priority_sort:
+            order = {'urgent': 0, 'watch': 1, 'ok': 2, None: 3, '': 3}
+            all_fixtures.sort(key=lambda f: (order.get(f.get('priority') or f.get('_room_pri'), 3), -(f.get('quantity', f.get('count', 1)))))
+
+        for f in all_fixtures:
+            ic1, ic2, ic3, ic4, ic5 = st.columns([2, 0.5, 1.2, 1, 1])
+            with ic1:
+                icon = "✏️ " if f.get('source') == 'manual' or f.get('override') else ""
+                st.markdown(f"{icon}**{fmt_type(f.get('type', ''))}** {priority_badge(f.get('priority', ''))}")
+            with ic2:
+                st.write(f.get('quantity', f.get('count', 1)))
+            with ic3:
+                st.caption(f['_room'])
+            with ic4:
+                st.markdown(cond_badge(f.get('condition')), unsafe_allow_html=True)
+            with ic5:
+                st.markdown(conf_badge(f.get('confidence')), unsafe_allow_html=True)
     else:
-        st.info("No assessments yet. Go to 'Add Room' to analyze a room photo.")
+        st.info("No fixtures yet. Assess some rooms first.")
 
 
-# ==================== TAB 3: BUILDING REPORT ====================
-with tab3:
-    st.header("Building Report")
+# =============================================================================
+# TAB: REPORT
+# =============================================================================
 
-    if st.session_state.room_analyses:
-        for analysis in st.session_state.room_analyses:
-            room_name = analysis.get('room_name', 'Unknown Room')
-            with st.expander(f"{room_name}", expanded=True):
+with tab_report:
+    st.subheader("Building Report")
 
-                # Photos
-                photos = st.session_state.room_photos.get(room_name, [])
-                if photos:
-                    photo_cols = st.columns(min(len(photos), 4))
-                    for i, photo_b64 in enumerate(photos[:4]):
-                        with photo_cols[i % 4]:
-                            st.image(base64.b64decode(photo_b64), use_container_width=True)
-                    st.write("")
+    if rooms:
+        priority_view = st.toggle("Priority view", key="rpt_priority")
+        room_list = list(rooms.values())
+        if priority_view:
+            order = {'urgent': 0, 'watch': 1, 'ok': 2, None: 3, '': 3}
+            room_list.sort(key=lambda r: order.get(r.get('priority'), 3))
 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.subheader("Surfaces")
-                    for s_label, s_key, c_key in [('Ceiling', 'ceiling_type', 'ceiling_condition'),
-                                                   ('Walls', 'wall_type', 'wall_condition'),
-                                                   ('Flooring', 'flooring_type', 'flooring_condition')]:
-                        s_val = analysis.get(s_key, 'N/A')
-                        s_cond = analysis.get(c_key, '')
-                        cond_html = f" {condition_badge(s_cond)}" if s_cond else ""
-                        st.markdown(f"**{s_label}:** {s_val}{cond_html}", unsafe_allow_html=True)
-
-                with col2:
-                    st.subheader("Fixture Summary")
-                    fixtures = analysis.get('fixtures', [])
-                    for f in sorted(fixtures, key=lambda x: -x.get('count', 0))[:8]:
-                        label = f.get('type', '').replace('_', ' ').title()
-                        cond = f.get('condition', '')
-                        cond_html = f" {condition_badge(cond)}" if cond else ""
-                        st.markdown(f"**{f.get('count', 0)}** {label}{cond_html}", unsafe_allow_html=True)
-
-                equipment = analysis.get('equipment', [])
-                if equipment:
-                    st.divider()
-                    st.subheader("Equipment")
-                    for e in equipment:
-                        mfg = e.get('manufacturer', '')
-                        model = e.get('model', '')
-                        st.write(f"**{e.get('type', 'Unknown')}**: {mfg} {model}".strip())
-                        if e.get('notes'):
-                            st.caption(e['notes'])
-
-                st.divider()
-                st.subheader("Assessment Notes")
-                st.info(analysis.get('general_notes', 'No notes available'))
-
-                materials = analysis.get('materials_noted', [])
-                if materials:
-                    st.write(f"**Materials observed:** {', '.join(materials)}")
+        floors = building.get('floors', [])
+        if floors and not priority_view:
+            for floor in floors:
+                st.markdown(f"### Floor {floor['label']}")
+                for room in room_list:
+                    if room.get('floorId') != floor['id']:
+                        continue
+                    _render_report_room(room)
+        else:
+            for room in room_list:
+                _render_report_room(room)
     else:
-        st.info("No building analyses yet. Go to 'Add Room' to analyze a room photo.")
+        st.info("No rooms to report on.")
 
 
-# ==================== TAB 4: EXPORT ====================
-with tab4:
-    st.header("Export")
+# =============================================================================
+# TAB: EXPORT
+# =============================================================================
 
-    if st.session_state.room_analyses:
-        # Preview table
-        st.subheader("Fixture Inventory Preview")
-        preview_rows = []
-        for a in st.session_state.room_analyses:
-            room = a.get('room_name', 'Unknown')
-            for f in a.get('fixtures', []):
-                preview_rows.append({
-                    'Room': room,
-                    'Fixture': f.get('type', '').replace('_', ' ').title(),
-                    'Count': f.get('count', 0),
-                    'Subtype': f.get('subtype', ''),
-                    'Condition': f.get('condition', ''),
-                    'Description': f.get('description', ''),
-                })
+with tab_export:
+    st.subheader("Export")
 
-        if preview_rows:
-            df_preview = pd.DataFrame(preview_rows)
-            st.dataframe(df_preview, use_container_width=True)
-
-        st.divider()
-
-        # Download buttons
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.subheader("PDF Report")
+    if rooms:
+        ec1, ec2, ec3 = st.columns(3)
+        with ec1:
+            st.markdown("**PDF Report**")
             try:
-                pdf_data = create_assessment_pdf(st.session_state.room_analyses, st.session_state.room_photos)
-                st.download_button(
-                    label="Download PDF",
-                    data=pdf_data,
-                    file_name=f"BuildScan_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf"
-                )
+                pdf_data = create_pdf(rooms, room_photos)
+                st.download_button("Download PDF", pdf_data, f"BuildScan_{datetime.now().strftime('%Y%m%d')}.pdf", "application/pdf", use_container_width=True)
             except Exception as e:
-                st.error(f"PDF generation failed: {e}")
+                st.error(f"PDF failed: {e}")
+        with ec2:
+            st.markdown("**Excel**")
+            excel_data = create_excel(rooms)
+            st.download_button("Download Excel", excel_data, f"BuildScan_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with ec3:
+            st.markdown("**CSV**")
+            csv_data = create_csv(rooms)
+            if csv_data:
+                st.download_button("Download CSV", csv_data, f"BuildScan_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", use_container_width=True)
 
-        with col2:
-            st.subheader("Excel")
-            excel_data = create_assessment_excel(st.session_state.room_analyses)
-            st.download_button(
-                label="Download Excel",
-                data=excel_data,
-                file_name=f"BuildScan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        with col3:
-            st.subheader("CSV")
-            if preview_rows:
-                csv_data = df_preview.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv_data,
-                    file_name=f"BuildScan_Fixtures_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-
-        with col4:
-            st.subheader("JSON")
-            json_data = json.dumps(st.session_state.room_analyses, indent=2, default=str)
-            st.download_button(
-                label="Download JSON",
-                data=json_data,
-                file_name=f"BuildScan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
+        # Delete project
+        st.divider()
+        st.markdown("### Delete Project")
+        st.caption("Type the project name to confirm deletion.")
+        del_confirm = st.text_input("Project name", key="del_confirm")
+        if st.button("Delete Project", type="secondary"):
+            if del_confirm == proj['name']:
+                del st.session_state.projects[proj['id']]
+                remaining = list(st.session_state.projects.keys())
+                st.session_state.active_project = remaining[0] if remaining else None
+                st.rerun()
+            else:
+                st.error("Name doesn't match.")
     else:
-        st.info("No data to export yet. Analyze some rooms first!")
+        st.info("No data to export.")
+
+
+# =============================================================================
+# REPORT ROOM RENDERER
+# =============================================================================
+
+def _render_report_room(room):
+    snap = latest_snapshot(room)
+    if not snap:
+        return
+    label = room.get('label', room.get('id', ''))
+    fixtures = snap.get('fixtures', [])
+    fix_count = sum(f.get('quantity', f.get('count', 1)) for f in fixtures)
+    photos = snap.get('photos', [])
+
+    with st.expander(f"{label} ({room['id']}) — {fix_count} fixtures {priority_badge(room.get('priority', ''))}", expanded=True):
+        # Photos
+        if photos:
+            pcols = st.columns(min(len(photos), 4))
+            for i, p in enumerate(photos[:4]):
+                with pcols[i % 4]:
+                    st.image(base64.b64decode(p['thumbUri']), use_container_width=True)
+
+        # Surfaces
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            st.markdown(f"**Ceiling:** {snap.get('ceiling_type', 'N/A')} {cond_badge(snap.get('ceiling_condition'))}", unsafe_allow_html=True)
+        with sc2:
+            st.markdown(f"**Walls:** {snap.get('wall_type', 'N/A')} {cond_badge(snap.get('wall_condition'))}", unsafe_allow_html=True)
+        with sc3:
+            st.markdown(f"**Flooring:** {snap.get('flooring_type', 'N/A')} {cond_badge(snap.get('flooring_condition'))}", unsafe_allow_html=True)
+
+        # Fixtures
+        for f in sorted(fixtures, key=lambda x: -(x.get('quantity', x.get('count', 1)))):
+            st.markdown(f"{f.get('quantity', f.get('count',1))}× **{fmt_type(f.get('type',''))}** {f.get('subtype','')} {cond_badge(f.get('condition'))} {conf_badge(f.get('confidence'))} {priority_badge(f.get('priority',''))}", unsafe_allow_html=True)
+
+        if snap.get('materials_noted'):
+            st.markdown(" ".join(f'<span class="material-tag">{m}</span>' for m in snap['materials_noted']), unsafe_allow_html=True)
+
+        if snap.get('general_notes'):
+            st.caption(snap['general_notes'])
+
 
 # Footer
 st.divider()
-st.caption(f"Assessment generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | BuildScan - AI Building Assessment")
+st.caption(f"BuildScan — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
