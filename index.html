@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>BuildScan — Building Assessment</title>
+<style>
+/* ========== CSS CUSTOM PROPERTIES ========== */
+:root {
+  --primary: #4F46E5;
+  --primary-light: #e0e7ff;
+  --primary-dark: #3730a3;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --text-light: #94a3b8;
+  --green: #16a34a; --green-bg: #dcfce7; --green-text: #166534;
+  --amber: #d97706; --amber-bg: #fef3c7; --amber-text: #92400e;
+  --red: #dc2626; --red-bg: #fecaca; --red-text: #991b1b;
+  --blue-bg: #dbeafe; --blue-text: #1e40af;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.1);
+  --topbar-h: 56px;
+  --bottombar-h: 0px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5; -webkit-tap-highlight-color: transparent; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+a { color: var(--primary); text-decoration: none; }
+
+/* ========== LAYOUT ========== */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+#topbar { height: var(--topbar-h); display: flex; align-items: center; gap: 12px; padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; z-index: 100; }
+#topbar .logo { font-weight: 800; font-size: 18px; color: var(--primary); white-space: nowrap; }
+#topbar .logo span { color: var(--text); }
+#topbar .project-select { flex: 1; min-width: 0; }
+#topbar .project-select select { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); font-size: 14px; }
+.topbar-actions { display: flex; gap: 6px; }
+
+#main-area { display: flex; flex: 1; overflow: hidden; }
+#sidebar { width: 220px; background: var(--card); border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; padding: 12px; }
+#view-container { flex: 1; overflow-y: auto; padding: 20px; }
+
+#bottombar { display: none; }
+#toast-container { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+#modal-container { display: none; position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+#modal-container.active { display: flex; }
+#modal-container .modal { background: var(--card); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+
+/* ========== SIDEBAR NAV ========== */
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); font-size: 14px; font-weight: 500; color: var(--text-muted); transition: all .15s; min-height: 44px; }
+.nav-item:hover, .nav-item.active { background: var(--primary-light); color: var(--primary-dark); }
+.nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light); padding: 16px 12px 6px; font-weight: 600; }
+.nav-divider { height: 1px; background: var(--border); margin: 8px 0; }
+.nav-badge { background: var(--primary); color: #fff; font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-left: auto; }
+
+/* ========== COMMON COMPONENTS ========== */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius); font-weight: 600; font-size: 14px; min-height: 44px; min-width: 44px; transition: all .15s; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+.btn-outline { border: 1px solid var(--border); background: var(--card); }
+.btn-outline:hover { background: var(--bg); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: 13px; min-height: 32px; }
+.btn-icon { padding: 6px; min-height: 36px; min-width: 36px; border-radius: 50%; }
+.btn-icon:hover { background: var(--bg); }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.card + .card { margin-top: 12px; }
+.card-header { font-weight: 700; font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+
+.input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); font-size: 14px; min-height: 44px; }
+.input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,.15); }
+select.input { appearance: auto; }
+textarea.input { min-height: 80px; resize: vertical; }
+label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+.form-group { margin-bottom: 14px; }
+
+.badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.badge-green { background: var(--green-bg); color: var(--green-text); }
+.badge-amber { background: var(--amber-bg); color: var(--amber-text); }
+.badge-red { background: var(--red-bg); color: var(--red-text); }
+.badge-blue { background: var(--blue-bg); color: var(--blue-text); }
+.badge-gray { background: #f1f5f9; color: #475569; }
+
+.tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.tag-surface { background: var(--primary-light); color: var(--primary-dark); }
+.tag-material { background: var(--amber-bg); color: var(--amber-text); }
+
+.toast { background: var(--text); color: #fff; padding: 10px 20px; border-radius: var(--radius); font-size: 14px; display: flex; align-items: center; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,.2); animation: slideUp .3s; }
+.toast .toast-action { background: rgba(255,255,255,.2); padding: 4px 12px; border-radius: 4px; font-weight: 600; cursor: pointer; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+.empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 12px; display: block; }
+.empty-state p { margin-top: 8px; font-size: 14px; }
+
+.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width .3s; }
+
+.priority-urgent { border-left: 4px solid var(--red) !important; }
+.priority-watch { border-left: 4px solid var(--amber) !important; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.flex-gap { display: flex; align-items: center; gap: 8px; }
+.mt-2 { margin-top: 8px; } .mt-4 { margin-top: 16px; } .mb-2 { margin-bottom: 8px; } .mb-4 { margin-bottom: 16px; }
+.text-sm { font-size: 13px; } .text-xs { font-size: 12px; } .text-muted { color: var(--text-muted); }
+.font-bold { font-weight: 700; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Room cards */
+.room-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--card); cursor: pointer; transition: all .15s; }
+.room-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(79,70,229,.12); }
+.room-card.unassessed { border-style: dashed; border-color: var(--text-light); opacity: .7; }
+.room-card.unassessed:hover { opacity: 1; }
+
+/* Fixture table */
+.fixture-row { display: grid; grid-template-columns: 2fr 60px 1.5fr 80px 80px 50px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.fixture-row.header { font-weight: 600; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; border-bottom: 2px solid var(--border); }
+.fixture-row .edit-icon { opacity: 0; transition: opacity .15s; }
+.fixture-row:hover .edit-icon { opacity: 1; }
+
+/* Diff view */
+.diff-added { background: var(--green-bg); }
+.diff-removed { background: var(--red-bg); }
+.diff-changed { background: var(--amber-bg); }
+
+/* Confidence badges */
+.conf-high { cursor: default; }
+.conf-medium, .conf-low { cursor: pointer; }
+
+/* Camera */
+.camera-container { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; }
+.camera-container video { width: 100%; display: block; }
+.camera-shutter { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); width: 64px; height: 64px; border-radius: 50%; background: #fff; border: 4px solid rgba(255,255,255,.5); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+.camera-shutter:active { transform: translateX(-50%) scale(.9); }
+
+/* Photo grid */
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.photo-thumb { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--border); }
+
+/* Offline banner */
+.offline-banner { background: var(--amber-bg); color: var(--amber-text); padding: 8px 16px; text-align: center; font-size: 13px; font-weight: 600; }
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+  :root { --bottombar-h: 60px; }
+  #sidebar { display: none; }
+  #view-container { padding: 12px; padding-bottom: calc(var(--bottombar-h) + 12px); }
+  #bottombar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; height: var(--bottombar-h); background: var(--card); border-top: 1px solid var(--border); z-index: 100; align-items: center; justify-content: space-around; }
+  .bottombar-item { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 12px; font-size: 11px; color: var(--text-muted); min-width: 44px; min-height: 44px; justify-content: center; border-radius: var(--radius); }
+  .bottombar-item.active { color: var(--primary); }
+  .bottombar-item svg { width: 22px; height: 22px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .fixture-row { grid-template-columns: 1.5fr 40px 1fr 60px 40px; font-size: 13px; }
+  .fixture-row .fixture-desc { display: none; }
+  .hide-mobile { display: none !important; }
+  .camera-fab { position: fixed; right: 16px; bottom: calc(var(--bottombar-h) + 16px); width: 60px; height: 60px; border-radius: 50%; background: var(--primary); color: #fff; box-shadow: 0 4px 16px rgba(79,70,229,.4); z-index: 90; display: flex; align-items: center; justify-content: center; }
+  .camera-fab svg { width: 28px; height: 28px; }
+}
+@media (min-width: 769px) {
+  .camera-fab { display: none; }
+  .show-mobile-only { display: none !important; }
+}
+
+/* ========== PRINT ========== */
+@media print {
+  #topbar, #bottombar, #toast-container, #modal-container, .no-print, button, .btn, .offline-banner, .camera-fab { display: none !important; }
+  #sidebar { display: none !important; }
+  #main-area { display: block; }
+  #view-container { padding: 0; overflow: visible; }
+  body { background: #fff; color: #000; font-size: 11pt; }
+  .card { box-shadow: none; border: 1px solid #ccc; page-break-inside: avoid; break-inside: avoid; }
+  .room-section { page-break-before: always; }
+  .room-section:first-child { page-break-before: auto; }
+  .photo-thumb { width: 150px; height: auto; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .priority-urgent, .priority-watch { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .badge, .tag { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <div class="logo">🏗️ Build<span>Scan</span></div>
+    <div class="project-select" id="project-switcher"></div>
+    <div class="topbar-actions" id="topbar-actions"></div>
+  </div>
+
+  <div id="offline-banner-slot"></div>
+
+  <div id="main-area">
+    <nav id="sidebar"></nav>
+    <div id="view-container"></div>
+  </div>
+
+  <nav id="bottombar"></nav>
+  <div id="toast-container"></div>
+  <div id="modal-container" onclick="if(event.target===this)Modal.close()"><div class="modal" id="modal-body"></div></div>
+</div>
+
+<script>
+/* ==========================================================================
+   SECTION 1: CONSTANTS & CONFIG
+   ========================================================================== */
+const FIXTURE_TYPES = [
+  'light_fixture','outlet','switch','smoke_detector','sink','toilet','door','window',
+  'vent','thermostat','fire_extinguisher','sprinkler_head','cabinet','countertop',
+  'bathtub','staircase','garage_door','electrical_panel','water_heater','hvac_unit','sump_pump'
+];
+const ROOM_TYPES = [
+  'Kitchen','Living Room','Bedroom','Bathroom','Basement','Garage','Office',
+  'Dining Room','Hallway','Stairwell','Mechanical Room','Utility Room','Attic',
+  'Exterior','Roof','Crawl Space','Storage','Conference Room','Break Room','Other'
+];
+const PRIORITIES = ['urgent','watch','ok'];
+const API_URL = 'https://api.anthropic.com/v1/messages';
+const API_VERSION = '2023-06-01';
+const MODEL = 'claude-sonnet-4-5-20250514';
+const MAX_SNAPSHOTS = 5;
+const STORAGE_KEY = 'buildscan_data';
+const APIKEY_KEY = 'buildscan_apikey';
+const QUOTA_WARN = 0.8;
+const QUOTA_BLOCK = 0.95;
+const MAX_STORAGE = 4.5 * 1024 * 1024; // conservative 4.5MB
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function fmtType(s) { return (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
+function fmtDate(iso) { if (!iso) return ''; const d = new Date(iso); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
+function fmtShortDate(iso) { if (!iso) return ''; return new Date(iso).toLocaleDateString(); }
+
+/* ==========================================================================
+   SECTION 2: STATE MANAGEMENT
+   ========================================================================== */
+const Store = (() => {
+  let state = { projects: {}, activeProjectId: null, pendingApiCalls: [] };
+  const listeners = new Set();
+
+  function get() { return state; }
+  function getActive() { return state.activeProjectId ? state.projects[state.activeProjectId] : null; }
+
+  function mutate(fn) {
+    fn(state);
+    Persist.save(state);
+    listeners.forEach(l => l(state));
+  }
+
+  function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+  function load(s) { state = s; }
+  function notify() { listeners.forEach(l => l(state)); }
+
+  return { get, getActive, mutate, subscribe, load, notify };
+})();
+
+/* ==========================================================================
+   SECTION 3: PERSISTENCE
+   ========================================================================== */
+const Persist = (() => {
+  function save(state) {
+    try {
+      const json = JSON.stringify(state);
+      localStorage.setItem(STORAGE_KEY, json);
+      checkQuota(json.length);
+    } catch (e) {
+      console.error('Save failed:', e);
+      Toast.show('Storage full! Export a backup and delete old projects.', 'error', 5000);
+    }
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  function checkQuota(size) {
+    const ratio = size / MAX_STORAGE;
+    const banner = document.getElementById('offline-banner-slot');
+    if (ratio > QUOTA_BLOCK) {
+      banner.innerHTML = '<div class="offline-banner" style="background:var(--red-bg);color:var(--red-text)">Storage full ('+Math.round(ratio*100)+'%). Export backup & delete old projects to continue.</div>';
+    } else if (ratio > QUOTA_WARN) {
+      banner.innerHTML = '<div class="offline-banner">Storage '+Math.round(ratio*100)+'% full. Consider exporting & deleting old projects.</div>';
+    } else {
+      const existing = banner.querySelector('.offline-banner:not([data-offline])');
+      if (existing) existing.remove();
+    }
+  }
+
+  function getApiKey() { return localStorage.getItem(APIKEY_KEY) || ''; }
+  function setApiKey(k) { localStorage.setItem(APIKEY_KEY, k); }
+
+  function exportBackup() {
+    const data = JSON.stringify(Store.get(), null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `BuildScan_Backup_${new Date().toISOString().slice(0,10)}.json`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  function importBackup(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data.projects) throw new Error('Invalid backup');
+        Store.load(data);
+        Persist.save(data);
+        Store.notify();
+        Router.go(Router.current());
+        Toast.show('Backup restored successfully');
+      } catch (e) { Toast.show('Invalid backup file: ' + e.message, 'error'); }
+    };
+    reader.readAsText(file);
+  }
+
+  return { save, load, getApiKey, setApiKey, exportBackup, importBackup, checkQuota };
+})();
+
+/* ==========================================================================
+   SECTION 4: API CLIENT + OFFLINE QUEUE
+   ========================================================================== */
+const Api = (() => {
+  let pendingPhotos = {}; // roomId -> [dataUri] (full-res, in memory only)
+
+  function buildPrompt(roomLabel, numPhotos) {
+    const ctx = numPhotos === 1
+      ? `This is a photo of the ${roomLabel}.`
+      : `These are ${numPhotos} photos of the SAME room: the ${roomLabel}, taken from different angles.`;
+    const dedup = numPhotos === 1
+      ? 'This is a single view — count everything visible.'
+      : 'These photos show the SAME room from different angles. Cross-reference to build ONE unified inventory. Do NOT double-count items visible in multiple photos.';
+
+    return `${ctx}\n\nYou are a construction building assessment specialist. Analyze ${numPhotos===1?'this photo':'ALL photos together'} to create a comprehensive inventory.\n\nIMPORTANT: ${dedup}\n\nSURFACES (rate condition good/fair/poor):\n- ceiling_type, wall_type, flooring_type\n\nFIXTURES (count each, rate condition, rate confidence high/medium/low):\nlight_fixture, outlet, switch, smoke_detector, sink, toilet, door, window, vent, thermostat, fire_extinguisher, sprinkler_head, cabinet, countertop, bathtub, staircase, electrical_panel, water_heater, hvac_unit\n\nCONDITION: good = no issues, fair = minor wear, poor = damaged/needs repair\nCONFIDENCE: high = clearly visible/identifiable, medium = partially visible/likely, low = uncertain/obscured\n\nMATERIALS: List visible building materials (copper pipe, PVC, etc.)\nEQUIPMENT: Note HVAC, water heater, electrical panel with manufacturer/model if readable\n\nRespond ONLY with valid JSON:\n{\n  "room_type": "string",\n  "ceiling_type": "string", "ceiling_condition": "good|fair|poor",\n  "wall_type": "string", "wall_condition": "good|fair|poor",\n  "flooring_type": "string", "flooring_condition": "good|fair|poor",\n  "fixtures": [{"type":"string","count":1,"subtype":"string","description":"string","condition":"good|fair|poor","confidence":"high|medium|low","condition_notes":"string or null"}],\n  "materials_noted": ["string"],\n  "equipment": [{"type":"string","manufacturer":"string or null","model":"string or null","notes":"string"}],\n  "general_notes": "2-3 sentence summary",\n  "total_fixture_count": 0\n}`;
+  }
+
+  async function analyze(roomId, photos, roomLabel) {
+    const apiKey = Persist.getApiKey();
+    if (!apiKey) { Toast.show('Set your API key in Settings first', 'error'); return null; }
+    if (!navigator.onLine) {
+      Toast.show('Offline — analysis queued. Will retry when connected.', 'error', 4000);
+      Store.mutate(s => { s.pendingApiCalls.push({ roomId, roomLabel, photoCount: photos.length, createdAt: new Date().toISOString() }); });
+      pendingPhotos[roomId] = photos;
+      showOfflineBanner();
+      return null;
+    }
+
+    const content = photos.map(uri => ({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: uri.split(',')[1] || uri }
+    }));
+    content.push({ type: 'text', text: buildPrompt(roomLabel, photos.length) });
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': API_VERSION,
+          'content-type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({ model: MODEL, max_tokens: 4096, messages: [{ role: 'user', content }] })
+      });
+      if (!res.ok) { const err = await res.text(); throw new Error(err); }
+      const data = await res.json();
+      const text = data.content?.[0]?.text || '';
+      const start = text.indexOf('{'), end = text.lastIndexOf('}') + 1;
+      if (start < 0) throw new Error('No JSON in response');
+      const result = JSON.parse(text.slice(start, end));
+      // Add source field to all fixtures
+      (result.fixtures || []).forEach(f => { f.source = 'ai'; f.id = uid(); f.override = false; });
+      return result;
+    } catch (e) {
+      console.error('API error:', e);
+      Toast.show('Analysis failed: ' + e.message, 'error', 5000);
+      return null;
+    }
+  }
+
+  async function flushQueue() {
+    const s = Store.get();
+    if (!s.pendingApiCalls.length || !navigator.onLine) return;
+    for (let i = s.pendingApiCalls.length - 1; i >= 0; i--) {
+      const item = s.pendingApiCalls[i];
+      const photos = pendingPhotos[item.roomId];
+      if (!photos) { Store.mutate(st => st.pendingApiCalls.splice(i, 1)); continue; }
+      // Would retry here — for now just remove stale entries
+      Store.mutate(st => st.pendingApiCalls.splice(i, 1));
+    }
+    hideOfflineBanner();
+  }
+
+  function showOfflineBanner() {
+    const slot = document.getElementById('offline-banner-slot');
+    const count = Store.get().pendingApiCalls.length;
+    if (count) slot.innerHTML = `<div class="offline-banner" data-offline>${count} analysis pending — waiting for connection <button class="btn btn-sm" onclick="Api.flushQueue()" style="margin-left:8px">Retry</button></div>`;
+  }
+  function hideOfflineBanner() {
+    const el = document.querySelector('[data-offline]');
+    if (el) el.remove();
+  }
+
+  window.addEventListener('online', () => { flushQueue(); Toast.show('Back online'); });
+  window.addEventListener('offline', () => showOfflineBanner());
+
+  return { analyze, flushQueue, showOfflineBanner, pendingPhotos };
+})();
+
+/* ==========================================================================
+   SECTION 5: CAMERA & IMAGE
+   ========================================================================== */
+const Camera = (() => {
+  let stream = null;
+
+  async function startViewfinder(videoEl) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+      videoEl.srcObject = stream;
+      videoEl.setAttribute('playsinline', '');
+      await videoEl.play();
+      return true;
+    } catch (e) {
+      console.log('Camera not available:', e);
+      return false;
+    }
+  }
+
+  function capture(videoEl) {
+    const canvas = document.createElement('canvas');
+    canvas.width = videoEl.videoWidth;
+    canvas.height = videoEl.videoHeight;
+    canvas.getContext('2d').drawImage(videoEl, 0, 0);
+    stopViewfinder();
+    return compressCanvas(canvas, 800 * 1024);
+  }
+
+  function stopViewfinder() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  function compressCanvas(canvas, maxBytes) {
+    // Resize if needed
+    const maxDim = 1600;
+    if (canvas.width > maxDim || canvas.height > maxDim) {
+      const ratio = Math.min(maxDim / canvas.width, maxDim / canvas.height);
+      const c2 = document.createElement('canvas');
+      c2.width = Math.round(canvas.width * ratio);
+      c2.height = Math.round(canvas.height * ratio);
+      c2.getContext('2d').drawImage(canvas, 0, 0, c2.width, c2.height);
+      canvas = c2;
+    }
+    let quality = 0.7;
+    let dataUri;
+    do {
+      dataUri = canvas.toDataURL('image/jpeg', quality);
+      quality -= 0.1;
+    } while (dataUri.length * 0.75 > maxBytes && quality > 0.1);
+    return dataUri;
+  }
+
+  async function processFile(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(compressCanvas(canvas, 800 * 1024));
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function makeThumbnail(dataUri, maxWidth = 200) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = maxWidth / img.width;
+        const canvas = document.createElement('canvas');
+        canvas.width = maxWidth;
+        canvas.height = Math.round(img.height * ratio);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.5));
+      };
+      img.src = dataUri;
+    });
+  }
+
+  return { startViewfinder, capture, stopViewfinder, processFile, makeThumbnail };
+})();
+
+/* ==========================================================================
+   SECTION 6: ROUTER
+   ========================================================================== */
+const Router = (() => {
+  const views = {};
+
+  function register(hash, renderFn) { views[hash] = renderFn; }
+  function go(hash) { location.hash = hash; render(); }
+  function current() { return location.hash || '#home'; }
+
+  function render() {
+    const hash = current().split('/')[0];
+    const view = views[hash];
+    const vc = document.getElementById('view-container');
+    if (view) {
+      vc.innerHTML = view();
+      vc.scrollTop = 0;
+    }
+    renderSidebar();
+    renderBottombar();
+    renderTopbar();
+  }
+
+  window.addEventListener('hashchange', render);
+  return { register, go, current, render };
+})();
+
+/* ==========================================================================
+   SECTION 7: TOAST & MODAL
+   ========================================================================== */
+const Toast = (() => {
+  function show(msg, type = 'info', duration = 3000, actionText, actionFn) {
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    if (type === 'error') el.style.background = 'var(--red)';
+    el.innerHTML = msg + (actionText ? ` <span class="toast-action" id="toast-action-btn">${actionText}</span>` : '');
+    container.appendChild(el);
+    if (actionFn) {
+      el.querySelector('#toast-action-btn')?.addEventListener('click', () => { actionFn(); el.remove(); });
+    }
+    setTimeout(() => el.remove(), duration);
+  }
+  return { show };
+})();
+
+const Modal = (() => {
+  function open(html) {
+    document.getElementById('modal-body').innerHTML = html;
+    document.getElementById('modal-container').classList.add('active');
+  }
+  function close() {
+    document.getElementById('modal-container').classList.remove('active');
+  }
+  return { open, close };
+})();
+
+/* ==========================================================================
+   SECTION 8: DIFF ENGINE
+   ========================================================================== */
+const Diff = (() => {
+  function compare(older, newer) {
+    const key = f => `${f.name || f.type}|${f.subtype || ''}`;
+    const oldMap = new Map((older.fixtures || []).map(f => [key(f), f]));
+    const newMap = new Map((newer.fixtures || []).map(f => [key(f), f]));
+    const added = [], removed = [], changed = [], unchanged = [];
+    for (const [k, f] of newMap) {
+      if (!oldMap.has(k)) added.push(f);
+      else {
+        const o = oldMap.get(k);
+        if (o.quantity !== f.quantity || o.condition !== f.condition) changed.push({ old: o, new: f });
+        else unchanged.push(f);
+      }
+    }
+    for (const [k, f] of oldMap) { if (!newMap.has(k)) removed.push(f); }
+    return { added, removed, changed, unchanged };
+  }
+  return { compare };
+})();
+
+/* ==========================================================================
+   SECTION 9: RENDER FUNCTIONS
+   ========================================================================== */
+
+// --- Helpers ---
+function getBuilding() {
+  const proj = Store.getActive();
+  if (!proj) return null;
+  const bids = Object.keys(proj.buildings || {});
+  return bids.length ? proj.buildings[bids[0]] : null;
+}
+function getRooms() {
+  const b = getBuilding();
+  return b ? Object.values(b.rooms || {}) : [];
+}
+function getRoom(id) {
+  const b = getBuilding();
+  return b?.rooms?.[id] || null;
+}
+function latestSnapshot(room) {
+  return room?.snapshots?.length ? room.snapshots[room.snapshots.length - 1] : null;
+}
+function isAssessed(room) {
+  const snap = latestSnapshot(room);
+  return snap && snap.fixtures && snap.fixtures.length > 0;
+}
+function totalFixtures(rooms) {
+  return rooms.reduce((sum, r) => {
+    const snap = latestSnapshot(r);
+    return sum + (snap?.fixtures || []).reduce((s, f) => s + (f.quantity || f.count || 1), 0);
+  }, 0);
+}
+function priorityClass(p) {
+  if (p === 'urgent') return 'priority-urgent';
+  if (p === 'watch') return 'priority-watch';
+  return '';
+}
+function condBadge(c) {
+  if (c === 'good') return '<span class="badge badge-green">Good</span>';
+  if (c === 'fair') return '<span class="badge badge-amber">Fair</span>';
+  if (c === 'poor') return '<span class="badge badge-red">Poor</span>';
+  return '';
+}
+function confBadge(c) {
+  if (c === 'high') return '<span class="badge badge-green conf-high" title="High confidence">✓</span>';
+  if (c === 'medium') return '<span class="badge badge-gray conf-medium" title="Medium confidence — click to confirm">~</span>';
+  return '<span class="badge badge-amber conf-low" title="Low confidence — click to confirm">?</span>';
+}
+function priorityBadge(p) {
+  if (p === 'urgent') return '<span class="badge badge-red">Urgent</span>';
+  if (p === 'watch') return '<span class="badge badge-amber">Watch</span>';
+  return '';
+}
+
+// --- Sidebar ---
+function renderSidebar() {
+  const hash = Router.current().split('/')[0];
+  const rooms = getRooms();
+  const assessed = rooms.filter(isAssessed).length;
+  document.getElementById('sidebar').innerHTML = `
+    <div class="nav-section">Navigation</div>
+    <a class="nav-item ${hash==='#home'?'active':''}" href="#home">🏠 Home</a>
+    <a class="nav-item ${hash==='#rooms'?'active':''}" href="#rooms">🏢 Rooms ${rooms.length?`<span class="nav-badge">${assessed}/${rooms.length}</span>`:''}</a>
+    <a class="nav-item ${hash==='#inventory'?'active':''}" href="#inventory">📋 Inventory</a>
+    <a class="nav-item ${hash==='#report'?'active':''}" href="#report">📊 Report</a>
+    <a class="nav-item ${hash==='#export'?'active':''}" href="#export">📥 Export</a>
+    <div class="nav-divider"></div>
+    <a class="nav-item ${hash==='#settings'?'active':''}" href="#settings">⚙️ Settings</a>
+  `;
+}
+
+// --- Bottombar (mobile) ---
+function renderBottombar() {
+  const hash = Router.current().split('/')[0];
+  document.getElementById('bottombar').innerHTML = `
+    <a class="bottombar-item ${hash==='#rooms'?'active':''}" href="#rooms">🏢<span>Rooms</span></a>
+    <a class="bottombar-item ${hash==='#inventory'?'active':''}" href="#inventory">📋<span>Inventory</span></a>
+    <a class="bottombar-item ${hash==='#report'?'active':''}" href="#report">📊<span>Report</span></a>
+    <a class="bottombar-item ${hash==='#export'?'active':''}" href="#export">📥<span>Export</span></a>
+    <a class="bottombar-item ${hash==='#settings'?'active':''}" href="#settings">⚙️<span>Settings</span></a>
+  `;
+}
+
+// --- Topbar ---
+function renderTopbar() {
+  const s = Store.get();
+  const projects = Object.values(s.projects);
+  document.getElementById('project-switcher').innerHTML = `
+    <select class="input" onchange="Actions.switchProject(this.value)" style="min-height:36px;font-size:13px">
+      ${projects.length === 0 ? '<option value="">No projects</option>' : ''}
+      ${projects.map(p => `<option value="${p.id}" ${p.id===s.activeProjectId?'selected':''}>${p.name}</option>`).join('')}
+    </select>
+  `;
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-sm btn-primary no-print" onclick="Actions.newProject()">+ Project</button>
+  `;
+}
+
+// --- HOME ---
+Router.register('#home', () => {
+  const proj = Store.getActive();
+  if (!proj) return `
+    <div class="empty-state">
+      <span class="empty-icon">🏗️</span>
+      <h2>Welcome to BuildScan</h2>
+      <p>Create a project to get started with your building assessment.</p>
+      <button class="btn btn-primary mt-4" onclick="Actions.newProject()">+ New Project</button>
+    </div>`;
+
+  const building = getBuilding();
+  const rooms = getRooms();
+  const assessed = rooms.filter(isAssessed).length;
+  const total = totalFixtures(rooms);
+
+  return `
+    <h2 style="margin-bottom:4px">${proj.name}</h2>
+    <p class="text-muted text-sm mb-4">Created ${fmtShortDate(proj.createdAt)}</p>
+    <div class="grid-3 mb-4">
+      <div class="card"><div class="text-muted text-sm">Rooms</div><div class="font-bold" style="font-size:28px">${rooms.length}</div></div>
+      <div class="card"><div class="text-muted text-sm">Assessed</div><div class="font-bold" style="font-size:28px">${assessed} / ${rooms.length}</div>
+        ${rooms.length ? `<div class="progress-bar mt-2"><div class="progress-fill" style="width:${rooms.length?Math.round(assessed/rooms.length*100):0}%"></div></div>` : ''}
+      </div>
+      <div class="card"><div class="text-muted text-sm">Total Fixtures</div><div class="font-bold" style="font-size:28px">${total}</div></div>
+    </div>
+    ${!building ? `<button class="btn btn-primary" onclick="Actions.newBuilding()">+ Add Building</button>` :
+    `<div class="card">
+      <div class="card-header">${building.name} <button class="btn btn-sm btn-outline" onclick="location.hash='#rooms'">View Rooms →</button></div>
+      <div class="text-sm text-muted">${building.floors?.length || 0} floors · ${rooms.length} rooms</div>
+    </div>`}
+  `;
+});
+
+// --- ROOMS ---
+Router.register('#rooms', () => {
+  const building = getBuilding();
+  if (!building) return '<div class="empty-state"><span class="empty-icon">🏢</span><h3>No building yet</h3><p>Add a building first.</p><button class="btn btn-primary mt-4" onclick="Actions.newBuilding()">+ Add Building</button></div>';
+
+  const rooms = Object.values(building.rooms || {});
+  const floors = building.floors || [];
+  const assessed = rooms.filter(isAssessed).length;
+
+  let roomsHtml = '';
+  if (floors.length) {
+    floors.forEach(floor => {
+      const floorRooms = rooms.filter(r => r.floorId === floor.id);
+      const floorAssessed = floorRooms.filter(isAssessed).length;
+      const sections = floor.sections || [{ id: 'default', label: '' }];
+
+      roomsHtml += `<div class="mb-4">
+        <div class="flex-between mb-2">
+          <h3>Floor ${floor.label}</h3>
+          <span class="text-sm text-muted">${floorAssessed}/${floorRooms.length} assessed</span>
+        </div>
+        <div class="progress-bar mb-2"><div class="progress-fill" style="width:${floorRooms.length?Math.round(floorAssessed/floorRooms.length*100):0}%"></div></div>`;
+
+      sections.forEach(sec => {
+        const secRooms = floorRooms.filter(r => (r.sectionId || 'default') === sec.id);
+        if (sec.label) roomsHtml += `<div class="text-sm font-bold text-muted mt-2 mb-2">Section ${sec.label}</div>`;
+        roomsHtml += `<div class="grid-3">${secRooms.map(r => renderRoomCard(r)).join('')}</div>`;
+      });
+
+      roomsHtml += `</div>`;
+    });
+  } else {
+    roomsHtml = `<div class="grid-3">${rooms.map(r => renderRoomCard(r)).join('')}</div>`;
+  }
+
+  return `
+    <div class="flex-between mb-4">
+      <h2>Rooms</h2>
+      <div class="flex-gap">
+        <button class="btn btn-sm btn-outline" onclick="Actions.addFloor()">+ Floor</button>
+        <button class="btn btn-sm btn-outline" onclick="Actions.bulkAddRooms()">+ Bulk Add</button>
+        <button class="btn btn-sm btn-primary" onclick="Actions.addRoom()">+ Room</button>
+      </div>
+    </div>
+    <div class="text-sm text-muted mb-4">${assessed} of ${rooms.length} rooms assessed</div>
+    ${roomsHtml}
+    ${rooms.length === 0 ? '<div class="empty-state mt-4"><span class="empty-icon">🚪</span><p>No rooms yet. Add a floor and rooms to begin.</p></div>' : ''}
+  `;
+});
+
+function renderRoomCard(room) {
+  const snap = latestSnapshot(room);
+  const assessed = isAssessed(room);
+  const fixtures = snap?.fixtures || [];
+  const fixtureCount = fixtures.reduce((s, f) => s + (f.quantity || f.count || 1), 0);
+  const photo = snap?.photos?.[0]?.thumbUri;
+
+  return `
+    <div class="room-card ${assessed ? '' : 'unassessed'} ${priorityClass(room.priority)}" data-action="openRoom" data-id="${room.id}">
+      ${photo ? `<img src="${photo}" class="photo-thumb" style="width:100%;height:80px;margin-bottom:8px" loading="lazy">` : ''}
+      <div class="font-bold truncate">${room.label || room.id}</div>
+      <div class="text-xs text-muted">${room.id}</div>
+      ${assessed
+        ? `<div class="text-sm mt-2">${fixtureCount} fixtures ${priorityBadge(room.priority)}</div>`
+        : '<div class="text-sm text-muted mt-2" style="font-style:italic">Tap to assess</div>'}
+    </div>`;
+}
+
+// --- ROOM DETAIL ---
+Router.register('#room', () => {
+  const roomId = Router.current().split('/')[1];
+  const room = getRoom(roomId);
+  if (!room) return '<div class="empty-state">Room not found</div>';
+
+  const snap = latestSnapshot(room);
+  const fixtures = snap?.fixtures || [];
+  const photos = snap?.photos || [];
+
+  return `
+    <div class="flex-between mb-4">
+      <div>
+        <h2>${room.label}</h2>
+        <span class="text-sm text-muted">${room.id}</span>
+      </div>
+      <div class="flex-gap">
+        <select class="input" style="width:auto;min-height:36px" onchange="Actions.setRoomPriority('${room.id}',this.value)">
+          <option value="" ${!room.priority?'selected':''}>No Priority</option>
+          <option value="urgent" ${room.priority==='urgent'?'selected':''}>🔴 Urgent</option>
+          <option value="watch" ${room.priority==='watch'?'selected':''}>🟡 Watch</option>
+          <option value="ok" ${room.priority==='ok'?'selected':''}>🟢 OK</option>
+        </select>
+        ${room.snapshots?.length > 1 ? `<button class="btn btn-sm btn-outline" data-action="compareSnapshots" data-id="${room.id}">Compare</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Photos -->
+    <div class="card mb-4">
+      <div class="card-header">Photos <span class="text-sm text-muted font-bold" style="font-weight:400">${photos.length} photo${photos.length!==1?'s':''}</span></div>
+      ${photos.length ? `<div class="photo-grid mb-2">${photos.map((p,i) => `<img src="${p.thumbUri}" class="photo-thumb" loading="lazy">`).join('')}</div>` : ''}
+      <div class="flex-gap mt-2">
+        <label class="btn btn-outline" style="cursor:pointer">
+          📷 Take Photo
+          <input type="file" accept="image/*" capture="environment" style="display:none" onchange="Actions.addPhoto('${room.id}', this.files)">
+        </label>
+        <label class="btn btn-outline" style="cursor:pointer">
+          📁 Upload
+          <input type="file" accept="image/jpeg,image/png" multiple style="display:none" onchange="Actions.addPhoto('${room.id}', this.files)">
+        </label>
+      </div>
+    </div>
+
+    <!-- Analyze -->
+    <div class="card mb-4 no-print">
+      <button class="btn btn-primary" onclick="Actions.analyzeRoom('${room.id}')" ${photos.length===0?'disabled':''} style="width:100%">
+        🔍 Analyze Room with AI
+      </button>
+      ${photos.length===0?'<div class="text-sm text-muted mt-2" style="text-align:center">Add photos first</div>':''}
+    </div>
+
+    <!-- Surfaces -->
+    ${snap ? `
+    <div class="card mb-4">
+      <div class="card-header">Surfaces</div>
+      <div class="grid-3">
+        <div><label>Ceiling</label><div>${snap.ceiling_type || 'N/A'} ${condBadge(snap.ceiling_condition)}</div></div>
+        <div><label>Walls</label><div>${snap.wall_type || 'N/A'} ${condBadge(snap.wall_condition)}</div></div>
+        <div><label>Flooring</label><div>${snap.flooring_type || 'N/A'} ${condBadge(snap.flooring_condition)}</div></div>
+      </div>
+    </div>` : ''}
+
+    <!-- Fixtures -->
+    <div class="card mb-4">
+      <div class="card-header">Fixtures <button class="btn btn-sm btn-outline no-print" onclick="Actions.addFixture('${room.id}')">+ Add</button></div>
+      ${fixtures.length ? `
+        <div class="fixture-row header">
+          <div>Fixture</div><div>Qty</div><div class="fixture-desc">Description</div><div>Condition</div><div>Conf.</div><div></div>
+        </div>
+        ${fixtures.map((f, i) => `
+          <div class="fixture-row ${priorityClass(f.priority)}">
+            <div class="flex-gap">
+              ${f.source==='manual'||f.override?'<span title="Manually edited">✏️</span>':''}
+              ${fmtType(f.name || f.type)}
+              ${priorityBadge(f.priority)}
+            </div>
+            <div>${f.quantity || f.count || 1}</div>
+            <div class="fixture-desc text-sm text-muted">${f.subtype||''} ${f.description||''}</div>
+            <div>${condBadge(f.condition)}</div>
+            <div><span data-action="confirmFixture" data-room="${room.id}" data-idx="${i}">${confBadge(f.confidence)}</span></div>
+            <div>
+              <button class="btn-icon edit-icon no-print" data-action="editFixture" data-room="${room.id}" data-idx="${i}" title="Edit">✏️</button>
+              <button class="btn-icon edit-icon no-print" data-action="deleteFixture" data-room="${room.id}" data-idx="${i}" title="Delete">🗑️</button>
+            </div>
+          </div>
+        `).join('')}
+      ` : '<div class="empty-state"><p>No fixtures detected yet. Add photos and run analysis.</p></div>'}
+    </div>
+
+    <!-- Materials & Equipment -->
+    ${snap?.materials_noted?.length ? `
+    <div class="card mb-4">
+      <div class="card-header">Materials</div>
+      <div>${snap.materials_noted.map(m => `<span class="tag tag-material">${m}</span>`).join(' ')}</div>
+    </div>` : ''}
+
+    ${snap?.equipment?.length ? `
+    <div class="card mb-4">
+      <div class="card-header">Equipment</div>
+      ${snap.equipment.map(e => `<div class="mb-2"><strong>${fmtType(e.type)}</strong>: ${e.manufacturer||''} ${e.model||''} <div class="text-sm text-muted">${e.notes||''}</div></div>`).join('')}
+    </div>` : ''}
+
+    ${snap?.general_notes ? `<div class="card"><div class="card-header">Notes</div><p class="text-sm">${snap.general_notes}</p></div>` : ''}
+  `;
+});
+
+// --- INVENTORY ---
+Router.register('#inventory', () => {
+  const rooms = getRooms();
+  const allFixtures = [];
+  rooms.forEach(r => {
+    const snap = latestSnapshot(r);
+    (snap?.fixtures || []).forEach(f => allFixtures.push({ ...f, roomLabel: r.label, roomId: r.id, roomPriority: r.priority }));
+  });
+  const total = allFixtures.reduce((s, f) => s + (f.quantity || f.count || 1), 0);
+  const types = new Set(allFixtures.map(f => f.name || f.type));
+
+  return `
+    <div class="flex-between mb-4">
+      <h2>Fixture Inventory</h2>
+      <span class="text-muted">${total} fixtures · ${types.size} types · ${rooms.filter(isAssessed).length} rooms</span>
+    </div>
+    ${allFixtures.length === 0 ? '<div class="empty-state"><span class="empty-icon">📋</span><p>No fixtures yet. Assess some rooms first.</p></div>' :
+    `<div class="fixture-row header">
+      <div>Fixture</div><div>Qty</div><div class="fixture-desc">Room</div><div>Condition</div><div>Conf.</div><div>Priority</div>
+    </div>
+    ${allFixtures.map(f => `
+      <div class="fixture-row ${priorityClass(f.priority || f.roomPriority)}">
+        <div>${f.source==='manual'||f.override?'✏️ ':''}${fmtType(f.name || f.type)}</div>
+        <div>${f.quantity || f.count || 1}</div>
+        <div class="fixture-desc"><a href="#room/${f.roomId}">${f.roomLabel}</a></div>
+        <div>${condBadge(f.condition)}</div>
+        <div>${confBadge(f.confidence)}</div>
+        <div>${priorityBadge(f.priority)}</div>
+      </div>
+    `).join('')}`}
+  `;
+});
+
+// --- REPORT ---
+Router.register('#report', () => {
+  const building = getBuilding();
+  if (!building) return '<div class="empty-state">No building data</div>';
+
+  const rooms = getRooms();
+  const floors = building.floors || [];
+  let html = `
+    <div class="flex-between mb-4 no-print">
+      <h2>Building Report</h2>
+      <div class="flex-gap">
+        <label class="flex-gap text-sm"><input type="checkbox" id="priority-sort" onchange="Actions.togglePrioritySort()"> Priority view</label>
+        <button class="btn btn-sm btn-outline" onclick="window.print()">🖨️ Print / PDF</button>
+      </div>
+    </div>
+    <div style="text-align:center;margin-bottom:20px" class="hide-on-screen">
+      <h1>BuildScan Assessment Report</h1>
+      <p>${Store.getActive()?.name || ''} · ${new Date().toLocaleDateString()}</p>
+    </div>
+  `;
+
+  const sortedRooms = [...rooms];
+  // Priority sort will be handled via checkbox toggle
+
+  const grouped = {};
+  floors.forEach(f => { grouped[f.id] = { floor: f, rooms: [] }; });
+  grouped['_none'] = { floor: null, rooms: [] };
+  sortedRooms.forEach(r => {
+    const key = r.floorId && grouped[r.floorId] ? r.floorId : '_none';
+    grouped[key].rooms.push(r);
+  });
+
+  Object.values(grouped).forEach(({ floor, rooms: floorRooms }) => {
+    if (!floorRooms.length) return;
+    if (floor) html += `<h3 class="mb-2 mt-4">Floor ${floor.label}</h3>`;
+
+    floorRooms.forEach(room => {
+      const snap = latestSnapshot(room);
+      if (!snap) return;
+      const fixtures = snap.fixtures || [];
+      const photos = snap.photos || [];
+      const fixtureCount = fixtures.reduce((s, f) => s + (f.quantity || f.count || 1), 0);
+
+      html += `<div class="card room-section ${priorityClass(room.priority)} mb-4">
+        <div class="card-header">${room.label} <span class="text-sm text-muted">${room.id}</span> ${priorityBadge(room.priority)}</div>
+
+        ${photos.length ? `<div class="photo-grid mb-2">${photos.map(p => `<img src="${p.thumbUri}" class="photo-thumb" style="max-width:200px" loading="lazy">`).join('')}</div>` : ''}
+
+        <div class="grid-3 mb-2">
+          <div><label>Ceiling</label><div>${snap.ceiling_type||'N/A'} ${condBadge(snap.ceiling_condition)}</div></div>
+          <div><label>Walls</label><div>${snap.wall_type||'N/A'} ${condBadge(snap.wall_condition)}</div></div>
+          <div><label>Flooring</label><div>${snap.flooring_type||'N/A'} ${condBadge(snap.flooring_condition)}</div></div>
+        </div>
+
+        <div class="text-sm font-bold mb-2">${fixtureCount} Fixtures</div>
+        ${fixtures.map(f => `<div class="text-sm">${f.quantity||f.count||1}× ${fmtType(f.name||f.type)} ${f.subtype?'('+f.subtype+')':''} ${condBadge(f.condition)} ${priorityBadge(f.priority)}</div>`).join('')}
+
+        ${snap.materials_noted?.length ? `<div class="mt-2">${snap.materials_noted.map(m=>`<span class="tag tag-material">${m}</span>`).join(' ')}</div>` : ''}
+        ${snap.general_notes ? `<p class="text-sm text-muted mt-2">${snap.general_notes}</p>` : ''}
+      </div>`;
+    });
+  });
+
+  return html;
+});
+
+// --- EXPORT ---
+Router.register('#export', () => {
+  return `
+    <h2 class="mb-4">Export</h2>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header">🖨️ Print / PDF</div>
+        <p class="text-sm text-muted mb-4">Generates a print-ready report with all rooms, fixtures, and photos.</p>
+        <button class="btn btn-primary" onclick="location.hash='#report';setTimeout(()=>window.print(),300)">Print Report</button>
+      </div>
+      <div class="card">
+        <div class="card-header">📊 CSV</div>
+        <p class="text-sm text-muted mb-4">Download fixture inventory as a CSV spreadsheet.</p>
+        <button class="btn btn-primary" onclick="Export.csv()">Download CSV</button>
+      </div>
+      <div class="card">
+        <div class="card-header">💾 Backup</div>
+        <p class="text-sm text-muted mb-4">Export all data as a JSON backup file.</p>
+        <button class="btn btn-outline" onclick="Persist.exportBackup()">Export Backup</button>
+      </div>
+      <div class="card">
+        <div class="card-header">📂 Restore</div>
+        <p class="text-sm text-muted mb-4">Import a previously exported backup.</p>
+        <label class="btn btn-outline" style="cursor:pointer">
+          Import Backup
+          <input type="file" accept=".json" style="display:none" onchange="Persist.importBackup(this.files[0])">
+        </label>
+      </div>
+    </div>
+
+    <div class="card mt-4" style="border-color:var(--red)">
+      <div class="card-header" style="color:var(--red)">⚠️ Delete Project</div>
+      <p class="text-sm text-muted mb-2">Type the project name to confirm deletion.</p>
+      <input class="input" id="delete-confirm-input" placeholder="Type project name...">
+      <button class="btn btn-danger btn-sm mt-2" onclick="Actions.deleteProject()">Delete Project</button>
+    </div>
+  `;
+});
+
+// --- SETTINGS ---
+Router.register('#settings', () => {
+  const apiKey = Persist.getApiKey();
+  return `
+    <h2 class="mb-4">Settings</h2>
+    <div class="card">
+      <div class="card-header">API Key</div>
+      <p class="text-sm text-muted mb-2">Your Anthropic API key. Stored locally, never sent anywhere except the Anthropic API.</p>
+      <input class="input" type="password" id="api-key-input" value="${apiKey}" placeholder="sk-ant-api03-...">
+      <button class="btn btn-primary btn-sm mt-2" onclick="Persist.setApiKey(document.getElementById('api-key-input').value);Toast.show('API key saved')">Save Key</button>
+      <div class="mt-2">${apiKey ? '<span class="badge badge-green">Key configured</span>' : '<span class="badge badge-red">No key set</span>'}</div>
+    </div>
+    <div class="card mt-4">
+      <div class="card-header">About</div>
+      <p class="text-sm text-muted">BuildScan v1.0 — AI-powered building assessment for construction companies.</p>
+      <p class="text-sm text-muted mt-2">Uses Claude by Anthropic for fixture and material identification.</p>
+    </div>
+  `;
+});
+
+// --- COMPARE VIEW ---
+Router.register('#compare', () => {
+  const roomId = Router.current().split('/')[1];
+  const room = getRoom(roomId);
+  if (!room || !room.snapshots || room.snapshots.length < 2) return '<div class="empty-state">Need at least 2 assessments to compare.</div>';
+
+  const newer = room.snapshots[room.snapshots.length - 1];
+  const older = room.snapshots[room.snapshots.length - 2];
+  const diff = Diff.compare(older, newer);
+
+  return `
+    <div class="flex-between mb-4">
+      <h2>${room.label} — Comparison</h2>
+      <a href="#room/${room.id}" class="btn btn-sm btn-outline">← Back</a>
+    </div>
+    <div class="grid-2 mb-4">
+      <div class="card"><div class="font-bold">Previous</div><div class="text-sm text-muted">${fmtDate(older.takenAt)}</div></div>
+      <div class="card"><div class="font-bold">Current</div><div class="text-sm text-muted">${fmtDate(newer.takenAt)}</div></div>
+    </div>
+    ${diff.added.length ? `<h3 class="mb-2" style="color:var(--green)">Added (${diff.added.length})</h3>${diff.added.map(f => `<div class="card diff-added mb-2">${fmtType(f.name||f.type)} × ${f.quantity||f.count||1}</div>`).join('')}` : ''}
+    ${diff.removed.length ? `<h3 class="mb-2 mt-4" style="color:var(--red)">Removed (${diff.removed.length})</h3>${diff.removed.map(f => `<div class="card diff-removed mb-2">${fmtType(f.name||f.type)} × ${f.quantity||f.count||1}</div>`).join('')}` : ''}
+    ${diff.changed.length ? `<h3 class="mb-2 mt-4" style="color:var(--amber)">Changed (${diff.changed.length})</h3>${diff.changed.map(c => `<div class="card diff-changed mb-2">${fmtType(c.old.name||c.old.type)}: ${c.old.quantity||c.old.count||1} → ${c.new.quantity||c.new.count||1}, ${c.old.condition||'?'} → ${c.new.condition||'?'}</div>`).join('')}` : ''}
+    ${diff.unchanged.length ? `<h3 class="mb-2 mt-4 text-muted">Unchanged (${diff.unchanged.length})</h3>` : ''}
+    ${!diff.added.length && !diff.removed.length && !diff.changed.length ? '<div class="empty-state"><p>No changes detected between assessments.</p></div>' : ''}
+  `;
+});
+
+/* ==========================================================================
+   SECTION 10: EXPORT
+   ========================================================================== */
+const Export = (() => {
+  function csv() {
+    const rooms = getRooms();
+    const rows = [['Room','Room ID','Fixture','Quantity','Subtype','Condition','Confidence','Priority','Source']];
+    rooms.forEach(r => {
+      const snap = latestSnapshot(r);
+      (snap?.fixtures || []).forEach(f => {
+        rows.push([r.label, r.id, fmtType(f.name||f.type), f.quantity||f.count||1, f.subtype||'', f.condition||'', f.confidence||'', f.priority||'', f.source||'']);
+      });
+    });
+    const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csvStr], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `BuildScan_Fixtures_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+  return { csv };
+})();
+
+/* ==========================================================================
+   SECTION 11: CLOUD STUBS (Phase 2)
+   ========================================================================== */
+/*
+ * MULTI-USER / TEAM ACCESS — Backend Requirements (Phase 2)
+ *
+ * Minimal viable backend:
+ *   - Auth: OAuth or magic link. Each user has an ID.
+ *   - Endpoint: POST /sync { projectId, rooms: { [roomId]: { version, data } } }
+ *   - Conflict resolution: last-write-wins per room (version timestamp).
+ *     The server stores the latest version per room. On sync, client sends
+ *     its room versions; server returns any rooms where server version > client version.
+ *   - Storage: Cloudflare D1/KV or Supabase Postgres for state, R2/S3 for photos.
+ *   - Delta sync: client tracks lastSyncAt, only sends rooms modified after that.
+ *
+ * Implementation would replace the stubs below.
+ */
+async function syncToCloud(state) {
+  // TODO: POST state to backend, merge response
+  console.log('[sync stub] syncToCloud called — not implemented');
+}
+async function loadFromCloud() {
+  // TODO: GET latest state from backend, merge with local
+  console.log('[sync stub] loadFromCloud called — not implemented');
+  return null;
+}
+
+/* ==========================================================================
+   SECTION 12: EVENT HANDLERS / ACTIONS
+   ========================================================================== */
+const Actions = (() => {
+
+  function newProject() {
+    Modal.open(`
+      <h3 class="mb-4">New Project</h3>
+      <div class="form-group"><label>Project Name</label><input class="input" id="new-project-name" placeholder="e.g., 123 Main St Renovation"></div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._createProject()">Create</button>
+      </div>
+    `);
+    setTimeout(() => document.getElementById('new-project-name')?.focus(), 100);
+  }
+  function _createProject() {
+    const name = document.getElementById('new-project-name')?.value?.trim();
+    if (!name) return Toast.show('Enter a project name', 'error');
+    const id = uid();
+    Store.mutate(s => {
+      s.projects[id] = { id, name, createdAt: new Date().toISOString(), buildings: {} };
+      s.activeProjectId = id;
+    });
+    Modal.close();
+    Router.go('#home');
+  }
+
+  function switchProject(id) {
+    Store.mutate(s => { s.activeProjectId = id; });
+    Router.go('#home');
+  }
+
+  function deleteProject() {
+    const proj = Store.getActive();
+    if (!proj) return;
+    const input = document.getElementById('delete-confirm-input')?.value?.trim();
+    if (input !== proj.name) return Toast.show('Type the exact project name to confirm', 'error');
+    Store.mutate(s => {
+      delete s.projects[proj.id];
+      const remaining = Object.keys(s.projects);
+      s.activeProjectId = remaining.length ? remaining[0] : null;
+    });
+    Toast.show('Project deleted');
+    Router.go('#home');
+  }
+
+  function newBuilding() {
+    Modal.open(`
+      <h3 class="mb-4">Add Building</h3>
+      <div class="form-group"><label>Building Name</label><input class="input" id="new-building-name" placeholder="e.g., Main Building"></div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._createBuilding()">Create</button>
+      </div>
+    `);
+  }
+  function _createBuilding() {
+    const name = document.getElementById('new-building-name')?.value?.trim() || 'Main Building';
+    const id = uid();
+    Store.mutate(s => {
+      const proj = s.projects[s.activeProjectId];
+      if (proj) proj.buildings[id] = { id, name, floors: [], rooms: {} };
+    });
+    Modal.close();
+    Router.go('#rooms');
+  }
+
+  function addFloor() {
+    Modal.open(`
+      <h3 class="mb-4">Add Floor</h3>
+      <div class="form-group"><label>Floor Label</label><input class="input" id="new-floor-label" placeholder="e.g., 1, 2, B1"></div>
+      <div class="form-group"><label>Sections (optional, comma-separated)</label><input class="input" id="new-floor-sections" placeholder="e.g., A, B, North Wing"></div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._createFloor()">Add</button>
+      </div>
+    `);
+  }
+  function _createFloor() {
+    const label = document.getElementById('new-floor-label')?.value?.trim();
+    if (!label) return Toast.show('Enter a floor label', 'error');
+    const sectionsStr = document.getElementById('new-floor-sections')?.value?.trim();
+    const sections = sectionsStr ? sectionsStr.split(',').map(s => ({ id: uid(), label: s.trim() })) : [];
+    Store.mutate(s => {
+      const b = getBuilding();
+      if (b) b.floors.push({ id: uid(), label, sections });
+    });
+    Modal.close();
+    Router.render();
+  }
+
+  function addRoom() {
+    const building = getBuilding();
+    const floors = building?.floors || [];
+    Modal.open(`
+      <h3 class="mb-4">Add Room</h3>
+      <div class="form-group"><label>Room Type</label><select class="input" id="new-room-type">${ROOM_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div>
+      <div class="form-group"><label>Room Label (optional)</label><input class="input" id="new-room-label" placeholder="e.g., Master Bath, Conference A"></div>
+      ${floors.length ? `<div class="form-group"><label>Floor</label><select class="input" id="new-room-floor">${floors.map(f=>`<option value="${f.id}">${f.label}</option>`).join('')}</select></div>` : ''}
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._createRoom()">Add</button>
+      </div>
+    `);
+  }
+  function _createRoom() {
+    const type = document.getElementById('new-room-type')?.value;
+    const label = document.getElementById('new-room-label')?.value?.trim() || type;
+    const floorId = document.getElementById('new-room-floor')?.value || null;
+    const building = getBuilding();
+    if (!building) return;
+
+    // Auto-generate room ID
+    const floor = building.floors?.find(f => f.id === floorId);
+    const floorLabel = floor?.label || '0';
+    const existingOnFloor = Object.values(building.rooms).filter(r => r.floorId === floorId).length;
+    const seq = String(existingOnFloor + 1).padStart(2, '0');
+    const roomId = `${floorLabel}-${seq}`;
+
+    Store.mutate(s => {
+      const b = getBuilding();
+      b.rooms[roomId] = { id: roomId, label, floorId, sectionId: null, priority: null, snapshots: [] };
+    });
+    Modal.close();
+    Router.render();
+  }
+
+  function bulkAddRooms() {
+    const building = getBuilding();
+    const floors = building?.floors || [];
+    Modal.open(`
+      <h3 class="mb-4">Bulk Add Rooms</h3>
+      <div class="form-group"><label>One room per line</label><textarea class="input" id="bulk-rooms" rows="8" placeholder="Room 101\nConference A\nBreak Room\nStorage"></textarea></div>
+      ${floors.length ? `<div class="form-group"><label>Floor</label><select class="input" id="bulk-floor">${floors.map(f=>`<option value="${f.id}">${f.label}</option>`).join('')}</select></div>` : ''}
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._bulkCreate()">Add All</button>
+      </div>
+    `);
+  }
+  function _bulkCreate() {
+    const text = document.getElementById('bulk-rooms')?.value?.trim();
+    if (!text) return;
+    const floorId = document.getElementById('bulk-floor')?.value || null;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const building = getBuilding();
+    if (!building) return;
+    const floor = building.floors?.find(f => f.id === floorId);
+    const floorLabel = floor?.label || '0';
+    let startSeq = Object.values(building.rooms).filter(r => r.floorId === floorId).length;
+
+    Store.mutate(s => {
+      const b = getBuilding();
+      lines.forEach(label => {
+        startSeq++;
+        const roomId = `${floorLabel}-${String(startSeq).padStart(2, '0')}`;
+        b.rooms[roomId] = { id: roomId, label, floorId, sectionId: null, priority: null, snapshots: [] };
+      });
+    });
+    Modal.close();
+    Toast.show(`Added ${lines.length} rooms`);
+    Router.render();
+  }
+
+  function openRoom(dataset) { Router.go('#room/' + dataset.id); }
+
+  function setRoomPriority(roomId, priority) {
+    Store.mutate(s => {
+      const room = getRoom(roomId);
+      if (room) room.priority = priority || null;
+    });
+  }
+
+  async function addPhoto(roomId, files) {
+    if (!files?.length) return;
+    const room = getRoom(roomId);
+    if (!room) return;
+
+    for (const file of files) {
+      const fullRes = await Camera.processFile(file);
+      const thumb = await Camera.makeThumbnail(fullRes);
+
+      Store.mutate(s => {
+        const r = getRoom(roomId);
+        if (!r.snapshots?.length) r.snapshots.push({ takenAt: new Date().toISOString(), photos: [], fixtures: [] });
+        const snap = r.snapshots[r.snapshots.length - 1];
+        snap.photos.push({ thumbUri: thumb, takenAt: new Date().toISOString() });
+      });
+      // Keep full-res in memory for API call
+      if (!Api.pendingPhotos[roomId]) Api.pendingPhotos[roomId] = [];
+      Api.pendingPhotos[roomId].push(fullRes);
+    }
+    Router.render();
+  }
+
+  async function analyzeRoom(roomId) {
+    const room = getRoom(roomId);
+    if (!room) return;
+    const photos = Api.pendingPhotos[roomId];
+    if (!photos?.length) {
+      // Try to use thumbnails as fallback (lower quality but works)
+      const snap = latestSnapshot(room);
+      if (!snap?.photos?.length) { Toast.show('Add photos first', 'error'); return; }
+      Toast.show('Using thumbnails for analysis (lower quality). For best results, re-upload photos.', 'error', 4000);
+      const thumbs = snap.photos.map(p => p.thumbUri);
+      await _runAnalysis(roomId, thumbs, room.label);
+      return;
+    }
+    await _runAnalysis(roomId, photos, room.label);
+    delete Api.pendingPhotos[roomId]; // Free memory
+  }
+
+  async function _runAnalysis(roomId, photos, label) {
+    const vc = document.getElementById('view-container');
+    const btn = vc.querySelector('[onclick*="analyzeRoom"]');
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analyzing...'; }
+
+    const result = await Api.analyze(roomId, photos, label);
+    if (!result) { Router.render(); return; }
+
+    Store.mutate(s => {
+      const room = getRoom(roomId);
+      // Create new snapshot or update latest
+      const snap = latestSnapshot(room) || { takenAt: new Date().toISOString(), photos: [], fixtures: [] };
+      if (!room.snapshots?.length) room.snapshots = [snap];
+
+      // If we already have fixtures, create a new snapshot (for comparison)
+      if (snap.fixtures?.length > 0 && room.snapshots.length < MAX_SNAPSHOTS) {
+        const newSnap = { takenAt: new Date().toISOString(), photos: snap.photos.slice(), fixtures: [] };
+        room.snapshots.push(newSnap);
+        Object.assign(room.snapshots[room.snapshots.length - 1], {
+          fixtures: result.fixtures || [],
+          ceiling_type: result.ceiling_type, ceiling_condition: result.ceiling_condition,
+          wall_type: result.wall_type, wall_condition: result.wall_condition,
+          flooring_type: result.flooring_type, flooring_condition: result.flooring_condition,
+          materials_noted: result.materials_noted || [],
+          equipment: result.equipment || [],
+          general_notes: result.general_notes,
+        });
+      } else {
+        Object.assign(snap, {
+          fixtures: result.fixtures || [],
+          ceiling_type: result.ceiling_type, ceiling_condition: result.ceiling_condition,
+          wall_type: result.wall_type, wall_condition: result.wall_condition,
+          flooring_type: result.flooring_type, flooring_condition: result.flooring_condition,
+          materials_noted: result.materials_noted || [],
+          equipment: result.equipment || [],
+          general_notes: result.general_notes,
+        });
+      }
+    });
+
+    const count = (result.fixtures || []).reduce((s, f) => s + (f.quantity || f.count || 1), 0);
+    Toast.show(`Found ${count} fixtures!`);
+    Router.render();
+  }
+
+  function addFixture(roomId) {
+    Modal.open(`
+      <h3 class="mb-4">Add Fixture</h3>
+      <div class="form-group"><label>Type</label><select class="input" id="add-fix-type">${FIXTURE_TYPES.map(t=>`<option value="${t}">${fmtType(t)}</option>`).join('')}</select></div>
+      <div class="grid-2">
+        <div class="form-group"><label>Quantity</label><input class="input" type="number" id="add-fix-qty" value="1" min="1"></div>
+        <div class="form-group"><label>Condition</label><select class="input" id="add-fix-cond"><option>good</option><option>fair</option><option>poor</option></select></div>
+      </div>
+      <div class="form-group"><label>Subtype</label><input class="input" id="add-fix-sub" placeholder="e.g., recessed, GFCI"></div>
+      <div class="form-group"><label>Description</label><input class="input" id="add-fix-desc"></div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._saveFixture('${roomId}')">Add</button>
+      </div>
+    `);
+  }
+  function _saveFixture(roomId) {
+    const type = document.getElementById('add-fix-type').value;
+    const qty = parseInt(document.getElementById('add-fix-qty').value) || 1;
+    const cond = document.getElementById('add-fix-cond').value;
+    const sub = document.getElementById('add-fix-sub').value.trim();
+    const desc = document.getElementById('add-fix-desc').value.trim();
+    Store.mutate(s => {
+      const room = getRoom(roomId);
+      if (!room.snapshots?.length) room.snapshots = [{ takenAt: new Date().toISOString(), photos: [], fixtures: [] }];
+      const snap = room.snapshots[room.snapshots.length - 1];
+      snap.fixtures.push({ id: uid(), name: type, type, quantity: qty, condition: cond, confidence: 'high', source: 'manual', override: false, subtype: sub, description: desc, priority: null });
+    });
+    Modal.close();
+    Toast.show('Fixture added');
+    Router.render();
+  }
+
+  function editFixture(dataset) {
+    const room = getRoom(dataset.room);
+    const snap = latestSnapshot(room);
+    const f = snap?.fixtures?.[dataset.idx];
+    if (!f) return;
+    Modal.open(`
+      <h3 class="mb-4">Edit Fixture</h3>
+      <div class="form-group"><label>Type</label><select class="input" id="edit-fix-type">${FIXTURE_TYPES.map(t=>`<option value="${t}" ${(f.name||f.type)===t?'selected':''}>${fmtType(t)}</option>`).join('')}</select></div>
+      <div class="grid-2">
+        <div class="form-group"><label>Quantity</label><input class="input" type="number" id="edit-fix-qty" value="${f.quantity||f.count||1}" min="1"></div>
+        <div class="form-group"><label>Condition</label><select class="input" id="edit-fix-cond"><option ${f.condition==='good'?'selected':''}>good</option><option ${f.condition==='fair'?'selected':''}>fair</option><option ${f.condition==='poor'?'selected':''}>poor</option></select></div>
+      </div>
+      <div class="form-group"><label>Subtype</label><input class="input" id="edit-fix-sub" value="${f.subtype||''}"></div>
+      <div class="form-group"><label>Description</label><input class="input" id="edit-fix-desc" value="${f.description||''}"></div>
+      <div class="form-group"><label>Priority</label><select class="input" id="edit-fix-pri"><option value="">None</option><option value="urgent" ${f.priority==='urgent'?'selected':''}>Urgent</option><option value="watch" ${f.priority==='watch'?'selected':''}>Watch</option><option value="ok" ${f.priority==='ok'?'selected':''}>OK</option></select></div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn btn-outline" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="Actions._updateFixture('${dataset.room}',${dataset.idx})">Save</button>
+      </div>
+    `);
+  }
+  function _updateFixture(roomId, idx) {
+    Store.mutate(s => {
+      const snap = latestSnapshot(getRoom(roomId));
+      const f = snap.fixtures[idx];
+      f.name = document.getElementById('edit-fix-type').value;
+      f.type = f.name;
+      f.quantity = parseInt(document.getElementById('edit-fix-qty').value) || 1;
+      f.count = f.quantity;
+      f.condition = document.getElementById('edit-fix-cond').value;
+      f.subtype = document.getElementById('edit-fix-sub').value.trim();
+      f.description = document.getElementById('edit-fix-desc').value.trim();
+      f.priority = document.getElementById('edit-fix-pri').value || null;
+      f.override = true;
+    });
+    Modal.close();
+    Toast.show('Fixture updated');
+    Router.render();
+  }
+
+  function deleteFixture(dataset) {
+    const room = getRoom(dataset.room);
+    const snap = latestSnapshot(room);
+    const f = snap?.fixtures?.[dataset.idx];
+    if (!f) return;
+    const removed = snap.fixtures.splice(dataset.idx, 1)[0];
+    Store.mutate(() => {}); // trigger save
+    Router.render();
+    Toast.show(`Deleted ${fmtType(removed.name||removed.type)}`, 'info', 5000, 'Undo', () => {
+      Store.mutate(s => {
+        const snap2 = latestSnapshot(getRoom(dataset.room));
+        snap2.fixtures.splice(dataset.idx, 0, removed);
+      });
+      Router.render();
+    });
+  }
+
+  function confirmFixture(dataset) {
+    const room = getRoom(dataset.room);
+    const snap = latestSnapshot(room);
+    const f = snap?.fixtures?.[dataset.idx];
+    if (!f || f.confidence === 'high') return;
+    Store.mutate(s => {
+      f.confidence = 'high';
+      f.override = true;
+    });
+    Router.render();
+    Toast.show('Fixture confirmed');
+  }
+
+  function compareSnapshots(dataset) { Router.go('#compare/' + dataset.id); }
+  function togglePrioritySort() { /* Re-render handled by checkbox state in render */ Router.render(); }
+
+  return {
+    newProject, _createProject, switchProject, deleteProject,
+    newBuilding, _createBuilding,
+    addFloor, _createFloor,
+    addRoom, _createRoom, bulkAddRooms, _bulkCreate,
+    openRoom, setRoomPriority,
+    addPhoto, analyzeRoom,
+    addFixture, _saveFixture, editFixture, _updateFixture, deleteFixture, confirmFixture,
+    compareSnapshots, togglePrioritySort
+  };
+})();
+
+/* ==========================================================================
+   SECTION 13: EVENT DELEGATION
+   ========================================================================== */
+document.getElementById('view-container').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  if (Actions[action]) Actions[action](el.dataset);
+});
+
+/* ==========================================================================
+   SECTION 14: INIT
+   ========================================================================== */
+(function boot() {
+  const saved = Persist.load();
+  if (saved && saved.projects) {
+    Store.load(saved);
+  }
+  Store.subscribe(() => {
+    // Re-render current view on state change (already handled by individual mutate calls)
+  });
+
+  // Show offline banner if pending
+  if (Store.get().pendingApiCalls?.length) Api.showOfflineBanner();
+
+  // Navigate
+  if (!location.hash) location.hash = '#home';
+  Router.render();
+})();
+</script>
+</body>
+</html>
